@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kitchen Cost Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <?!= include('style') ?>
+</head>
+<body>
+
+<div class="app-layout">
+
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      🍱 KCC
+      <span>Kitchen Cost Control</span>
+    </div>
+
+    <nav>
+      <div class="nav-section">
+        <div class="nav-label">Dashboard</div>
+        <div class="nav-item" data-page="dashboard" onclick="navigate('dashboard')">
+          <span class="icon">📊</span> Dashboard
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-label">Master Data</div>
+        <div class="nav-item" data-page="bahan" onclick="navigate('bahan')">
+          <span class="icon">📦</span> Bahan Baku
+        </div>
+        <div class="nav-item" data-page="produk" onclick="navigate('produk')">
+          <span class="icon">🥟</span> Produk
+        </div>
+        <div class="nav-item" data-page="supplier" onclick="navigate('supplier')">
+          <span class="icon">🚚</span> Supplier
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-label">Operasional</div>
+        <div class="nav-item" data-page="resep" onclick="navigate('resep')">
+          <span class="icon">📋</span> Resep
+        </div>
+        <div class="nav-item" data-page="hpp" onclick="navigate('hpp')">
+          <span class="icon">🧮</span> HPP &amp; Margin
+        </div>
+        <div class="nav-item" data-page="inventory" onclick="navigate('inventory')">
+          <span class="icon">📈</span> Inventory
+        </div>
+        <div class="nav-item" data-page="pembelian" onclick="navigate('pembelian')">
+          <span class="icon">🛒</span> Pembelian
+        </div>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <a id="link-spreadsheet" href="#" target="_blank" style="color:rgba(255,255,255,.5);font-size:11px;text-decoration:none;padding:12px 16px;display:block">
+        🔗 Buka Spreadsheet
+      </a>
+    </div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <main id="main-content" class="main-content">
+    <div class="loading">
+      <div class="spinner"></div> Memuat aplikasi...
+    </div>
+  </main>
+
+</div>
+
+<!-- Toast Container -->
+<div id="toast-container"></div>
+
+<?!= include('script') ?>
+
+</body>
+</html>

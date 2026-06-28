@@ -1,0 +1,1866 @@
+<script>
+// ============================================================
+// script.html — Client-side JavaScript
+// ATURAN: Tidak ada business logic di sini.
+//         Semua data manipulation → google.script.run
+//         File ini hanya: routing, UI rendering, API calls
+// ============================================================
+
+// ─── State ───────────────────────────────────────────────────
+const State = {
+  currentPage : 'dashboard',
+  data : {
+    bahan     : [],
+    produk    : [],
+    supplier  : [],
+    resep     : {},   // { [idProduk]: [items] }
+    hpp       : [],   // ringkasan HPP semua produk
+    inventory : null, // summary inventory
+    stockCard : {},   // { [idBahan]: data }
+    pembelian : [],   // daftar purchase
+  },
+  filter : {
+    bahan     : { q: '', status: 'aktif', kategori: '' },
+    produk    : { q: '', status: 'aktif', kategori: '' },
+    supplier  : { q: '', status: 'aktif' },
+    hpp       : { q: '', kategori: '' },
+    inventory : { q: '' },
+    pembelian : { q: '', bulan: '' },
+  },
+};
+
+// ─── API Bridge ──────────────────────────────────────────────
+function callServer(fnName, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(res => resolve(res))
+      .withFailureHandler(err => reject(err))
+      [fnName](...args);
+  });
+}
+
+// ─── Toast ───────────────────────────────────────────────────
+function toast(message, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = message;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+const toastOk  = msg => toast(msg, 'success');
+const toastErr = msg => toast(msg, 'error');
+const toastMsg = msg => toast(msg, 'info');
+
+// ─── Modal ───────────────────────────────────────────────────
+function openModal(id) {
+  document.getElementById(id).classList.remove('hidden');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.add('hidden');
+}
+function closeAllModals() {
+  document.querySelectorAll('.modal-overlay').forEach(m => m.classList.add('hidden'));
+}
+
+// ─── Router ──────────────────────────────────────────────────
+function navigate(page) {
+  State.currentPage = page;
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === page);
+  });
+  const main = document.getElementById('main-content');
+  main.innerHTML = '<div class="loading"><div class="spinner"></div> Memuat...</div>';
+
+  const map = {
+    dashboard : renderDashboard,
+    bahan     : renderBahan,
+    produk    : renderProduk,
+    supplier  : renderSupplier,
+    resep     : renderResep,
+    hpp       : renderHPP,
+    inventory : renderInventory,
+    pembelian : renderPembelian,
+  };
+  if (map[page]) map[page]();
+}
+
+// ─── Helpers ─────────────────────────────────────────────────
+function _rupiah(val) {
+  if (!val || val === 0) return 'Rp 0';
+  return 'Rp ' + Number(val).toLocaleString('id-ID');
+}
+
+/** Escape HTML special chars — prevents XSS when rendering sheet data into innerHTML */
+function _escHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function _uniqueKategori(arr, field) {
+  const set = new Set(arr.map(x => x[field]).filter(Boolean));
+  return [...set].sort();
+}
+
+function _setLoading(btnId, loading) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  btn.disabled = loading;
+  if (loading) {
+    btn.dataset.origText = btn.textContent;
+    btn.textContent = 'Menyimpan...';
+  } else {
+    btn.textContent = btn.dataset.origText || 'Simpan';
+  }
+}
+
+// ─── Confirm Dialog ──────────────────────────────────────────
+let _confirmCallback = null;
+
+function showConfirm(title, msg, onConfirm) {
+  _confirmCallback = onConfirm;
+  document.getElementById('confirm-title').textContent = title;
+  document.getElementById('confirm-msg').textContent   = msg;
+  openModal('modal-confirm');
+}
+
+function _execConfirm() {
+  closeModal('modal-confirm');
+  if (_confirmCallback) _confirmCallback();
+  _confirmCallback = null;
+}
+
+// ════════════════════════════════════════════════════════════
+// MASTER SUPPLIER
+// ════════════════════════════════════════════════════════════
+
+async function renderSupplier() {
+  const main = document.getElementById('main-content');
+  try {
+    const res = await callServer('apiSupplierGetAll', true);
+    State.data.supplier = res.data || [];
+    _renderSupplierPage();
+  } catch (e) {
+    main.innerHTML = `<p style="color:red">Error: ${e.message}</p>`;
+  }
+}
+
+function _renderSupplierPage() {
+  const main    = document.getElementById('main-content');
+  const f       = State.filter.supplier;
+  const allData = State.data.supplier;
+
+  // Hitung totals
+  const totalAktif = allData.filter(s => String(s.AKTIF) === 'TRUE').length;
+
+  // Filter client-side
+  let rows = allData;
+  if (f.status === 'aktif')    rows = rows.filter(s => String(s.AKTIF) === 'TRUE');
+  if (f.status === 'nonaktif') rows = rows.filter(s => String(s.AKTIF) !== 'TRUE');
+  if (f.q) {
+    const q = f.q.toLowerCase();
+    rows = rows.filter(s =>
+      s.NAMA_SUPPLIER.toLowerCase().includes(q) ||
+      (s.PIC && s.PIC.toLowerCase().includes(q)) ||
+      (s.TELEPON && s.TELEPON.includes(q))
+    );
+  }
+
+  main.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Master Supplier</div>
+        <div class="page-subtitle">${totalAktif} supplier aktif &bull; ${allData.length} total</div>
+      </div>
+      <button class="btn btn-primary" onclick="openFormSupplier()">+ Tambah Supplier</button>
+    </div>
+
+    <div class="card">
+      <div class="filter-bar">
+        <input type="search" placeholder="Cari nama, PIC, telepon..."
+          value="${f.q}" oninput="State.filter.supplier.q=this.value;_renderSupplierPage()">
+        <label>Status:
+          <select onchange="State.filter.supplier.status=this.value;_renderSupplierPage()">
+            <option value="aktif"   ${f.status==='aktif'   ?'selected':''}>Aktif</option>
+            <option value="nonaktif"${f.status==='nonaktif'?'selected':''}>Nonaktif</option>
+            <option value="semua"   ${f.status==='semua'   ?'selected':''}>Semua</option>
+          </select>
+        </label>
+        <span style="margin-left:auto;font-size:12px;color:var(--c-muted)">${rows.length} ditampilkan</span>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>ID</th>
+            <th>Nama Supplier</th>
+            <th>PIC</th>
+            <th>Telepon</th>
+            <th>Alamat</th>
+            <th>Status</th>
+            <th style="text-align:right">Aksi</th>
+          </tr></thead>
+          <tbody>
+            ${rows.length === 0 ? `
+              <tr><td colspan="7">
+                <div class="empty-state">
+                  <div class="empty-state-icon">🚚</div>
+                  <div class="empty-state-text">${allData.length === 0 ? 'Belum ada supplier. Tambah supplier pertama.' : 'Tidak ada data yang sesuai filter.'}</div>
+                </div>
+              </td></tr>
+            ` : rows.map(s => {
+              const aktif = String(s.AKTIF) === 'TRUE';
+              const _esc = _escHtml;
+              return `<tr>
+                <td><code>${_esc(s.ID_SUPPLIER)}</code></td>
+                <td><strong>${_esc(s.NAMA_SUPPLIER)}</strong></td>
+                <td>${s.PIC || '<span style="color:var(--c-muted)">—</span>'}</td>
+                <td>${s.TELEPON || '<span style="color:var(--c-muted)">—</span>'}</td>
+                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                    title="${s.ALAMAT || ''}">${s.ALAMAT || '<span style="color:var(--c-muted)">—</span>'}</td>
+                <td><span class="badge ${aktif ? 'badge-success' : 'badge-muted'}">${aktif ? '● Aktif' : '○ Nonaktif'}</span></td>
+                <td>
+                  <div class="td-actions" style="justify-content:flex-end">
+                    <button class="btn btn-ghost btn-sm" onclick="editSupplier('${s.ID_SUPPLIER}')">Edit</button>
+                    ${aktif
+                      ? `<button class="btn btn-sm" style="background:#fdecea;color:#b53030;border:none" onclick="toggleSupplier('${s.ID_SUPPLIER}', false)">Nonaktifkan</button>`
+                      : `<button class="btn btn-success btn-sm" onclick="toggleSupplier('${s.ID_SUPPLIER}', true)">Aktifkan</button>`
+                    }
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Modal Form Supplier -->
+    <div id="modal-supplier" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-header">
+          <span id="modal-supplier-title">Tambah Supplier</span>
+          <button class="btn-close" onclick="closeModal('modal-supplier')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="form-group col-full">
+              <label class="form-label">Nama Supplier <span class="req">*</span></label>
+              <input id="fs-nama" class="form-control" placeholder="Nama perusahaan / toko">
+            </div>
+            <div class="form-group">
+              <label class="form-label">PIC (Person in Charge)</label>
+              <input id="fs-pic" class="form-control" placeholder="Nama kontak">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Telepon / WA</label>
+              <input id="fs-telepon" class="form-control" placeholder="08xx-xxxx-xxxx">
+            </div>
+            <div class="form-group col-full">
+              <label class="form-label">Alamat</label>
+              <textarea id="fs-alamat" class="form-control" rows="2" placeholder="Alamat lengkap supplier"></textarea>
+            </div>
+            <div class="form-group col-full">
+              <label class="form-label">Catatan</label>
+              <input id="fs-catatan" class="form-control" placeholder="Informasi tambahan">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('modal-supplier')">Batal</button>
+          <button class="btn btn-primary" id="btn-save-supplier" onclick="saveSupplier()">Simpan</button>
+        </div>
+      </div>
+    </div>
+
+    ${_confirmModalHtml()}
+  `;
+}
+
+let _editingSupId = null;
+
+function openFormSupplier() {
+  _editingSupId = null;
+  document.getElementById('modal-supplier-title').textContent = 'Tambah Supplier';
+  ['fs-nama','fs-pic','fs-telepon','fs-alamat','fs-catatan'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  openModal('modal-supplier');
+}
+
+function editSupplier(id) {
+  const s = State.data.supplier.find(x => x.ID_SUPPLIER === id);
+  if (!s) return;
+  _editingSupId = id;
+  document.getElementById('modal-supplier-title').textContent = `Edit Supplier — ${s.ID_SUPPLIER}`;
+  document.getElementById('fs-nama').value    = s.NAMA_SUPPLIER;
+  document.getElementById('fs-pic').value     = s.PIC || '';
+  document.getElementById('fs-telepon').value = s.TELEPON || '';
+  document.getElementById('fs-alamat').value  = s.ALAMAT || '';
+  document.getElementById('fs-catatan').value = s.CATATAN || '';
+  openModal('modal-supplier');
+}
+
+async function saveSupplier() {
+  const data = {
+    NAMA_SUPPLIER : document.getElementById('fs-nama').value.trim(),
+    PIC           : document.getElementById('fs-pic').value.trim(),
+    TELEPON       : document.getElementById('fs-telepon').value.trim(),
+    ALAMAT        : document.getElementById('fs-alamat').value.trim(),
+    CATATAN       : document.getElementById('fs-catatan').value.trim(),
+  };
+
+  if (!data.NAMA_SUPPLIER) { toastErr('Nama Supplier wajib diisi'); return; }
+
+  _setLoading('btn-save-supplier', true);
+  try {
+    const res = _editingSupId
+      ? await callServer('apiSupplierUpdate', _editingSupId, data)
+      : await callServer('apiSupplierCreate', data);
+
+    if (res.success) {
+      toastOk(res.message);
+      closeModal('modal-supplier');
+      const r = await callServer('apiSupplierGetAll', true);
+      State.data.supplier = r.data || [];
+      _renderSupplierPage();
+    } else {
+      toastErr(res.message);
+    }
+  } catch (e) {
+    toastErr('Error: ' + e.message);
+  } finally {
+    _setLoading('btn-save-supplier', false);
+  }
+}
+
+async function toggleSupplier(id, activate) {
+  const s = State.data.supplier.find(x => x.ID_SUPPLIER === id);
+  if (!s) return;
+
+  if (!activate) {
+    showConfirm(
+      'Nonaktifkan Supplier',
+      `"${s.NAMA_SUPPLIER}" akan dinonaktifkan. Lanjutkan?`,
+      () => _doToggleSupplier(id, false)
+    );
+    return;
+  }
+  _doToggleSupplier(id, true);
+}
+
+async function _doToggleSupplier(id, activate) {
+  try {
+    const fn  = activate ? 'apiSupplierReactivate' : 'apiSupplierDeactivate';
+    const res = await callServer(fn, id);
+    if (res.success) {
+      toastOk(res.message);
+      const r = await callServer('apiSupplierGetAll', true);
+      State.data.supplier = r.data || [];
+      _renderSupplierPage();
+    } else {
+      toastErr(res.message);
+    }
+  } catch (e) {
+    toastErr(e.message);
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// MASTER PRODUK
+// ════════════════════════════════════════════════════════════
+
+async function renderProduk() {
+  const main = document.getElementById('main-content');
+  try {
+    const res = await callServer('apiProdukGetAll', true);
+    State.data.produk = res.data || [];
+    _renderProdukPage();
+  } catch (e) {
+    main.innerHTML = `<p style="color:red">Error: ${e.message}</p>`;
+  }
+}
+
+function _renderProdukPage() {
+  const main    = document.getElementById('main-content');
+  const f       = State.filter.produk;
+  const allData = State.data.produk;
+
+  const totalAktif = allData.filter(p => String(p.AKTIF) === 'TRUE').length;
+  const kategoriList = _uniqueKategori(allData, 'KATEGORI');
+
+  let rows = allData;
+  if (f.status === 'aktif')    rows = rows.filter(p => String(p.AKTIF) === 'TRUE');
+  if (f.status === 'nonaktif') rows = rows.filter(p => String(p.AKTIF) !== 'TRUE');
+  if (f.kategori) rows = rows.filter(p => p.KATEGORI === f.kategori);
+  if (f.q) {
+    const q = f.q.toLowerCase();
+    rows = rows.filter(p => p.NAMA_PRODUK.toLowerCase().includes(q) || (p.KATEGORI && p.KATEGORI.toLowerCase().includes(q)));
+  }
+
+  main.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Master Produk</div>
+        <div class="page-subtitle">${totalAktif} produk aktif &bull; ${allData.length} total</div>
+      </div>
+      <button class="btn btn-primary" onclick="openFormProduk()">+ Tambah Produk</button>
+    </div>
+
+    <div class="card">
+      <div class="filter-bar">
+        <input type="search" placeholder="Cari nama produk..."
+          value="${f.q}" oninput="State.filter.produk.q=this.value;_renderProdukPage()">
+        <label>Kategori:
+          <select onchange="State.filter.produk.kategori=this.value;_renderProdukPage()">
+            <option value="">Semua Kategori</option>
+            ${kategoriList.map(k => `<option value="${k}" ${f.kategori===k?'selected':''}>${k}</option>`).join('')}
+          </select>
+        </label>
+        <label>Status:
+          <select onchange="State.filter.produk.status=this.value;_renderProdukPage()">
+            <option value="aktif"   ${f.status==='aktif'   ?'selected':''}>Aktif</option>
+            <option value="nonaktif"${f.status==='nonaktif'?'selected':''}>Nonaktif</option>
+            <option value="semua"   ${f.status==='semua'   ?'selected':''}>Semua</option>
+          </select>
+        </label>
+        <span style="margin-left:auto;font-size:12px;color:var(--c-muted)">${rows.length} ditampilkan</span>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>ID</th>
+            <th>Nama Produk</th>
+            <th>Kategori</th>
+            <th>Harga Jual</th>
+            <th>HPP</th>
+            <th>Margin</th>
+            <th>Satuan</th>
+            <th>Status</th>
+            <th style="text-align:right">Aksi</th>
+          </tr></thead>
+          <tbody>
+            ${rows.length === 0 ? `
+              <tr><td colspan="9">
+                <div class="empty-state">
+                  <div class="empty-state-icon">🥟</div>
+                  <div class="empty-state-text">${allData.length === 0 ? 'Belum ada produk. Tambah produk pertama.' : 'Tidak ada data yang sesuai filter.'}</div>
+                </div>
+              </td></tr>
+            ` : rows.map(p => {
+              const aktif  = String(p.AKTIF) === 'TRUE';
+              const hppStr = p.HPP && Number(p.HPP) > 0
+                ? _rupiah(p.HPP)
+                : '<span class="badge badge-muted">Belum dihitung</span>';
+              const marginStr = p.MARGIN_PCT && Number(p.MARGIN_PCT) > 0
+                ? `<span class="${Number(p.MARGIN_PCT) >= 30 ? 'badge badge-success' : 'badge badge-warn'}">${p.MARGIN_PCT}%</span>`
+                : '—';
+              const _escP = _escHtml;
+              return `<tr>
+                <td><code>${_escP(p.ID_PRODUK)}</code></td>
+                <td><strong>${_escP(p.NAMA_PRODUK)}</strong></td>
+                <td>${p.KATEGORI || '<span style="color:var(--c-muted)">—</span>'}</td>
+                <td><strong>${_rupiah(p.HARGA_JUAL)}</strong></td>
+                <td>${hppStr}</td>
+                <td>${marginStr}</td>
+                <td>${p.SATUAN_JUAL}</td>
+                <td><span class="badge ${aktif ? 'badge-success' : 'badge-muted'}">${aktif ? '● Aktif' : '○ Nonaktif'}</span></td>
+                <td>
+                  <div class="td-actions" style="justify-content:flex-end">
+                    <button class="btn btn-ghost btn-sm" onclick="editProduk('${p.ID_PRODUK}')">Edit</button>
+                    ${aktif
+                      ? `<button class="btn btn-sm" style="background:#fdecea;color:#b53030;border:none" onclick="toggleProduk('${p.ID_PRODUK}', false)">Nonaktifkan</button>`
+                      : `<button class="btn btn-success btn-sm" onclick="toggleProduk('${p.ID_PRODUK}', true)">Aktifkan</button>`
+                    }
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Modal Form Produk -->
+    <div id="modal-produk" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-header">
+          <span id="modal-produk-title">Tambah Produk</span>
+          <button class="btn-close" onclick="closeModal('modal-produk')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="form-group col-full">
+              <label class="form-label">Nama Produk <span class="req">*</span></label>
+              <input id="fp-nama" class="form-control" placeholder="e.g. Dimsum Udang">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Kategori</label>
+              <input id="fp-kategori" class="form-control" placeholder="e.g. Dimsum, Minuman, Paket">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Satuan Jual <span class="req">*</span></label>
+              <select id="fp-satuan-jual" class="form-control">
+                <option value="">-- Pilih --</option>
+                <option>porsi</option>
+                <option>pcs</option>
+                <option>lusin</option>
+                <option>pack</option>
+                <option>box</option>
+              </select>
+            </div>
+            <div class="form-group col-full">
+              <label class="form-label">Harga Jual (Rp) <span class="req">*</span></label>
+              <input id="fp-harga-jual" class="form-control" type="number" min="0" step="500" placeholder="0">
+              <span class="form-hint">Preview: <span id="fp-harga-preview">Rp 0</span></span>
+            </div>
+            <div class="form-group col-full">
+              <label class="form-label">Catatan</label>
+              <input id="fp-catatan" class="form-control" placeholder="Deskripsi atau keterangan produk">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('modal-produk')">Batal</button>
+          <button class="btn btn-primary" id="btn-save-produk" onclick="saveProduk()">Simpan</button>
+        </div>
+      </div>
+    </div>
+
+    ${_confirmModalHtml()}
+  `;
+
+  // Live preview harga
+  document.getElementById('fp-harga-jual').addEventListener('input', function() {
+    document.getElementById('fp-harga-preview').textContent = _rupiah(this.value);
+  });
+}
+
+let _editingProdukId = null;
+
+function openFormProduk() {
+  _editingProdukId = null;
+  document.getElementById('modal-produk-title').textContent = 'Tambah Produk';
+  ['fp-nama','fp-kategori','fp-catatan'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('fp-harga-jual').value  = '';
+  document.getElementById('fp-satuan-jual').value = '';
+  openModal('modal-produk');
+}
+
+function editProduk(id) {
+  const p = State.data.produk.find(x => x.ID_PRODUK === id);
+  if (!p) return;
+  _editingProdukId = id;
+  document.getElementById('modal-produk-title').textContent = `Edit Produk — ${p.ID_PRODUK}`;
+  document.getElementById('fp-nama').value       = p.NAMA_PRODUK;
+  document.getElementById('fp-kategori').value   = p.KATEGORI || '';
+  document.getElementById('fp-harga-jual').value = p.HARGA_JUAL;
+  document.getElementById('fp-satuan-jual').value= p.SATUAN_JUAL;
+  document.getElementById('fp-catatan').value    = p.CATATAN || '';
+  const prev = document.getElementById('fp-harga-preview');
+  if (prev) prev.textContent = _rupiah(p.HARGA_JUAL);
+  openModal('modal-produk');
+}
+
+async function saveProduk() {
+  const data = {
+    NAMA_PRODUK : document.getElementById('fp-nama').value.trim(),
+    KATEGORI    : document.getElementById('fp-kategori').value.trim(),
+    HARGA_JUAL  : Number(document.getElementById('fp-harga-jual').value) || 0,
+    SATUAN_JUAL : document.getElementById('fp-satuan-jual').value,
+    CATATAN     : document.getElementById('fp-catatan').value.trim(),
+  };
+
+  if (!data.NAMA_PRODUK) { toastErr('Nama Produk wajib diisi'); return; }
+  if (!data.HARGA_JUAL || Number(data.HARGA_JUAL) <= 0) { toastErr('Harga Jual wajib diisi'); return; }
+  if (!data.SATUAN_JUAL) { toastErr('Satuan Jual wajib dipilih'); return; }
+
+  _setLoading('btn-save-produk', true);
+  try {
+    const res = _editingProdukId
+      ? await callServer('apiProdukUpdate', _editingProdukId, data)
+      : await callServer('apiProdukCreate', data);
+
+    if (res.success) {
+      toastOk(res.message);
+      closeModal('modal-produk');
+      const r = await callServer('apiProdukGetAll', true);
+      State.data.produk = r.data || [];
+      _renderProdukPage();
+    } else {
+      toastErr(res.message);
+    }
+  } catch (e) {
+    toastErr('Error: ' + e.message);
+  } finally {
+    _setLoading('btn-save-produk', false);
+  }
+}
+
+async function toggleProduk(id, activate) {
+  const p = State.data.produk.find(x => x.ID_PRODUK === id);
+  if (!p) return;
+
+  if (!activate) {
+    showConfirm(
+      'Nonaktifkan Produk',
+      `"${p.NAMA_PRODUK}" akan dinonaktifkan. Lanjutkan?`,
+      () => _doToggleProduk(id, false)
+    );
+    return;
+  }
+  _doToggleProduk(id, true);
+}
+
+async function _doToggleProduk(id, activate) {
+  try {
+    const fn  = activate ? 'apiProdukReactivate' : 'apiProdukDeactivate';
+    const res = await callServer(fn, id);
+    if (res.success) {
+      toastOk(res.message);
+      const r = await callServer('apiProdukGetAll', true);
+      State.data.produk = r.data || [];
+      _renderProdukPage();
+    } else {
+      toastErr(res.message);
+    }
+  } catch (e) {
+    toastErr(e.message);
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// MASTER BAHAN
+// ════════════════════════════════════════════════════════════
+
+async function renderBahan() {
+  const main = document.getElementById('main-content');
+  try {
+    const [bahanRes, supRes] = await Promise.all([
+      callServer('apiBahanGetAll', true),
+      callServer('apiSupplierGetAll', false),
+    ]);
+    State.data.bahan    = bahanRes.data || [];
+    State.data.supplier = supRes.data || [];
+    _renderBahanPage();
+  } catch (e) {
+    main.innerHTML = `<p style="color:red">Error: ${e.message}</p>`;
+  }
+}
+
+function _renderBahanPage() {
+  const main    = document.getElementById('main-content');
+  const f       = State.filter.bahan;
+  const allData = State.data.bahan;
+
+  const totalAktif = allData.filter(b => String(b.AKTIF) === 'TRUE').length;
+  const kategoriList = _uniqueKategori(allData, 'KATEGORI');
+
+  let rows = allData;
+  if (f.status === 'aktif')    rows = rows.filter(b => String(b.AKTIF) === 'TRUE');
+  if (f.status === 'nonaktif') rows = rows.filter(b => String(b.AKTIF) !== 'TRUE');
+  if (f.kategori) rows = rows.filter(b => b.KATEGORI === f.kategori);
+  if (f.q) {
+    const q = f.q.toLowerCase();
+    rows = rows.filter(b => b.NAMA_BAHAN.toLowerCase().includes(q) || (b.KATEGORI && b.KATEGORI.toLowerCase().includes(q)));
+  }
+
+  // Build supplier lookup
+  const supMap = {};
+  State.data.supplier.forEach(s => { supMap[s.ID_SUPPLIER] = s.NAMA_SUPPLIER; });
+
+  main.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Master Bahan Baku</div>
+        <div class="page-subtitle">${totalAktif} bahan aktif &bull; ${allData.length} total</div>
+      </div>
+      <button class="btn btn-primary" onclick="openFormBahan()">+ Tambah Bahan</button>
+    </div>
+
+    <div class="card">
+      <div class="filter-bar">
+        <input type="search" placeholder="Cari nama bahan..."
+          value="${f.q}" oninput="State.filter.bahan.q=this.value;_renderBahanPage()">
+        <label>Kategori:
+          <select onchange="State.filter.bahan.kategori=this.value;_renderBahanPage()">
+            <option value="">Semua Kategori</option>
+            ${kategoriList.map(k => `<option value="${k}" ${f.kategori===k?'selected':''}>${k}</option>`).join('')}
+          </select>
+        </label>
+        <label>Status:
+          <select onchange="State.filter.bahan.status=this.value;_renderBahanPage()">
+            <option value="aktif"   ${f.status==='aktif'   ?'selected':''}>Aktif</option>
+            <option value="nonaktif"${f.status==='nonaktif'?'selected':''}>Nonaktif</option>
+            <option value="semua"   ${f.status==='semua'   ?'selected':''}>Semua</option>
+          </select>
+        </label>
+        <span style="margin-left:auto;font-size:12px;color:var(--c-muted)">${rows.length} ditampilkan</span>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>ID</th>
+            <th>Nama Bahan</th>
+            <th>Kategori</th>
+            <th>Supplier</th>
+            <th>Satuan Beli</th>
+            <th>Satuan Pakai</th>
+            <th title="1 Satuan Beli = N Satuan Pakai">Konversi</th>
+            <th>Harga Terakhir</th>
+            <th>Harga Rata-rata</th>
+            <th>Min Stok</th>
+            <th>Status</th>
+            <th style="text-align:right">Aksi</th>
+          </tr></thead>
+          <tbody>
+            ${rows.length === 0 ? `
+              <tr><td colspan="12">
+                <div class="empty-state">
+                  <div class="empty-state-icon">📦</div>
+                  <div class="empty-state-text">${allData.length === 0 ? 'Belum ada bahan. Tambah bahan baku pertama.' : 'Tidak ada data yang sesuai filter.'}</div>
+                </div>
+              </td></tr>
+            ` : rows.map(b => {
+              const aktif    = String(b.AKTIF) === 'TRUE';
+              const supNama  = supMap[b.ID_SUPPLIER] || (b.ID_SUPPLIER ? b.ID_SUPPLIER : '<span style="color:var(--c-muted)">—</span>');
+              const konvStr  = b.KONVERSI
+                ? `1 ${b.SATUAN_BELI} = ${b.KONVERSI} ${b.SATUAN_PAKAI}`
+                : '—';
+              const _escB = _escHtml;
+              return `<tr>
+                <td><code>${_escB(b.ID_BAHAN)}</code></td>
+                <td><strong>${_escB(b.NAMA_BAHAN)}</strong></td>
+                <td>${b.KATEGORI || '<span style="color:var(--c-muted)">—</span>'}</td>
+                <td>${supNama}</td>
+                <td>${b.SATUAN_BELI}</td>
+                <td>${b.SATUAN_PAKAI}</td>
+                <td style="font-size:11px;color:var(--c-muted)">${konvStr}</td>
+                <td><strong>${_rupiah(b.HARGA_TERAKHIR)}</strong></td>
+                <td>${_rupiah(b.HARGA_RATA2)}</td>
+                <td>${Number(b.STOK_MINIMUM) > 0 ? b.STOK_MINIMUM + ' ' + b.SATUAN_PAKAI : '<span style="color:var(--c-muted)">—</span>'}</td>
+                <td><span class="badge ${aktif ? 'badge-success' : 'badge-muted'}">${aktif ? '● Aktif' : '○ Nonaktif'}</span></td>
+                <td>
+                  <div class="td-actions" style="justify-content:flex-end">
+                    <button class="btn btn-ghost btn-sm" onclick="editBahan('${b.ID_BAHAN}')">Edit</button>
+                    ${aktif
+                      ? `<button class="btn btn-sm" style="background:#fdecea;color:#b53030;border:none" onclick="toggleBahan('${b.ID_BAHAN}', false)">Nonaktifkan</button>`
+                      : `<button class="btn btn-success btn-sm" onclick="toggleBahan('${b.ID_BAHAN}', true)">Aktifkan</button>`
+                    }
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Modal Form Bahan -->
+    <div id="modal-bahan" class="modal-overlay hidden">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <span id="modal-bahan-title">Tambah Bahan</span>
+          <button class="btn-close" onclick="closeModal('modal-bahan')">&times;</button>
+        </div>
+        <div class="modal-body">
+
+          <div class="form-grid" style="margin-bottom:14px">
+            <div class="form-group col-full">
+              <label class="form-label">Nama Bahan <span class="req">*</span></label>
+              <input id="fb-nama" class="form-control" placeholder="e.g. Tepung Terigu, Udang Vannamei">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Kategori</label>
+              <input id="fb-kategori" class="form-control" placeholder="e.g. Daging, Sayur, Bumbu, Kemasan">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Supplier</label>
+              <select id="fb-supplier" class="form-control">
+                <option value="">— Tidak ada / Pilih nanti —</option>
+                ${State.data.supplier.map(s => `<option value="${s.ID_SUPPLIER}">${s.ID_SUPPLIER} — ${s.NAMA_SUPPLIER}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <hr class="divider">
+          <div style="font-size:12px;font-weight:600;color:var(--c-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Satuan & Konversi</div>
+
+          <div class="form-grid-3" style="margin-bottom:14px">
+            <div class="form-group">
+              <label class="form-label">Satuan Beli <span class="req">*</span></label>
+              <select id="fb-satuan-beli" class="form-control" onchange="_updateKonversiHint()">
+                <option value="">-- Pilih --</option>
+                <option>kg</option><option>gram</option><option>liter</option><option>ml</option>
+                <option>pcs</option><option>pack</option><option>karung</option><option>lusin</option><option>box</option>
+              </select>
+              <span class="form-hint">Satuan saat membeli dari supplier</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Satuan Pakai <span class="req">*</span></label>
+              <select id="fb-satuan-pakai" class="form-control" onchange="_updateKonversiHint()">
+                <option value="">-- Pilih --</option>
+                <option>gram</option><option>kg</option><option>ml</option><option>liter</option>
+                <option>pcs</option><option>pack</option><option>lusin</option>
+              </select>
+              <span class="form-hint">Satuan saat digunakan di resep</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Konversi <span class="req">*</span></label>
+              <input id="fb-konversi" class="form-control" type="number" min="0.001" step="0.001" value="1" oninput="_updateKonversiHint()">
+              <span class="form-hint" id="fb-konversi-hint">1 satuan beli = 1 satuan pakai</span>
+            </div>
+          </div>
+
+          <hr class="divider">
+          <div style="font-size:12px;font-weight:600;color:var(--c-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Harga</div>
+
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">Harga Terakhir (Rp) <span class="req">*</span></label>
+              <input id="fb-harga-terakhir" class="form-control" type="number" min="0" step="100" placeholder="0"
+                oninput="_syncHargaRata2()">
+              <span class="form-hint">Harga beli terkini per satuan beli</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Harga Rata-rata (Rp)</label>
+              <input id="fb-harga-rata2" class="form-control" type="number" min="0" step="100" placeholder="0">
+              <span class="form-hint">Otomatis sama dengan harga terakhir jika dikosongkan</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Minimum Stok</label>
+              <input id="fb-stok-min" class="form-control" type="number" min="0" step="1" value="0">
+              <span class="form-hint" id="fb-stok-min-hint">dalam satuan pakai</span>
+            </div>
+          </div>
+
+          <hr class="divider">
+          <div class="form-group">
+            <label class="form-label">Catatan</label>
+            <input id="fb-catatan" class="form-control" placeholder="Merk, kualitas, catatan penyimpanan...">
+          </div>
+
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('modal-bahan')">Batal</button>
+          <button class="btn btn-primary" id="btn-save-bahan" onclick="saveBahan()">Simpan</button>
+        </div>
+      </div>
+    </div>
+
+    ${_confirmModalHtml()}
+  `;
+
+  // Attach listener after render
+  document.getElementById('fb-satuan-pakai').addEventListener('change', function() {
+    const hint = document.getElementById('fb-stok-min-hint');
+    if (hint) hint.textContent = 'dalam ' + (this.value || 'satuan pakai');
+    _updateKonversiHint();
+  });
+}
+
+function _updateKonversiHint() {
+  const beli  = document.getElementById('fb-satuan-beli')?.value  || 'satuan beli';
+  const pakai = document.getElementById('fb-satuan-pakai')?.value || 'satuan pakai';
+  const n     = document.getElementById('fb-konversi')?.value     || '1';
+  const hint  = document.getElementById('fb-konversi-hint');
+  if (hint) hint.textContent = `1 ${beli} = ${n} ${pakai}`;
+}
+
+function _syncHargaRata2() {
+  const tEl = document.getElementById('fb-harga-terakhir');
+  const rEl = document.getElementById('fb-harga-rata2');
+  if (!rEl || !tEl) return;
+  // hanya sync jika rata2 masih kosong / 0
+  if (!rEl.value || Number(rEl.value) === 0) {
+    rEl.value = tEl.value;
+  }
+}
+
+let _editingBahanId = null;
+
+function openFormBahan() {
+  _editingBahanId = null;
+  document.getElementById('modal-bahan-title').textContent = 'Tambah Bahan';
+  ['fb-nama','fb-kategori','fb-catatan'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('fb-supplier').value      = '';
+  document.getElementById('fb-satuan-beli').value   = '';
+  document.getElementById('fb-satuan-pakai').value  = '';
+  document.getElementById('fb-konversi').value      = '1';
+  document.getElementById('fb-harga-terakhir').value= '';
+  document.getElementById('fb-harga-rata2').value   = '';
+  document.getElementById('fb-stok-min').value      = '0';
+  _updateKonversiHint();
+  openModal('modal-bahan');
+}
+
+function editBahan(id) {
+  const b = State.data.bahan.find(x => x.ID_BAHAN === id);
+  if (!b) return;
+  _editingBahanId = id;
+  document.getElementById('modal-bahan-title').textContent = `Edit Bahan — ${b.ID_BAHAN}`;
+  document.getElementById('fb-nama').value         = b.NAMA_BAHAN;
+  document.getElementById('fb-kategori').value     = b.KATEGORI || '';
+  document.getElementById('fb-supplier').value     = b.ID_SUPPLIER || '';
+  document.getElementById('fb-satuan-beli').value  = b.SATUAN_BELI || '';
+  document.getElementById('fb-satuan-pakai').value = b.SATUAN_PAKAI || '';
+  document.getElementById('fb-konversi').value     = b.KONVERSI || 1;
+  document.getElementById('fb-harga-terakhir').value = b.HARGA_TERAKHIR || 0;
+  document.getElementById('fb-harga-rata2').value  = b.HARGA_RATA2 || 0;
+  document.getElementById('fb-stok-min').value     = b.STOK_MINIMUM || 0;
+  document.getElementById('fb-catatan').value      = b.CATATAN || '';
+  _updateKonversiHint();
+  openModal('modal-bahan');
+}
+
+async function saveBahan() {
+  const hargaTerakhir = Number(document.getElementById('fb-harga-terakhir').value) || 0;
+  const hargaRata2Val = Number(document.getElementById('fb-harga-rata2').value)    || 0;
+
+  const data = {
+    NAMA_BAHAN     : document.getElementById('fb-nama').value.trim(),
+    KATEGORI       : document.getElementById('fb-kategori').value.trim(),
+    ID_SUPPLIER    : document.getElementById('fb-supplier').value,
+    SATUAN_BELI    : document.getElementById('fb-satuan-beli').value,
+    SATUAN_PAKAI   : document.getElementById('fb-satuan-pakai').value,
+    KONVERSI       : Number(document.getElementById('fb-konversi').value) || 1,
+    HARGA_TERAKHIR : hargaTerakhir,
+    HARGA_RATA2    : hargaRata2Val || hargaTerakhir,
+    STOK_MINIMUM   : Number(document.getElementById('fb-stok-min').value) || 0,
+    CATATAN        : document.getElementById('fb-catatan').value.trim(),
+  };
+
+  // Validasi
+  if (!data.NAMA_BAHAN)   { toastErr('Nama Bahan wajib diisi'); return; }
+  if (!data.SATUAN_BELI)  { toastErr('Satuan Beli wajib dipilih'); return; }
+  if (!data.SATUAN_PAKAI) { toastErr('Satuan Pakai wajib dipilih'); return; }
+  if (!data.HARGA_TERAKHIR || data.HARGA_TERAKHIR <= 0) { toastErr('Harga Terakhir wajib diisi'); return; }
+
+  _setLoading('btn-save-bahan', true);
+  try {
+    const res = _editingBahanId
+      ? await callServer('apiBahanUpdate', _editingBahanId, data)
+      : await callServer('apiBahanCreate', data);
+
+    if (res.success) {
+      toastOk(res.message);
+      closeModal('modal-bahan');
+      const [bahanRes, supRes] = await Promise.all([
+        callServer('apiBahanGetAll', true),
+        callServer('apiSupplierGetAll', false),
+      ]);
+      State.data.bahan    = bahanRes.data || [];
+      State.data.supplier = supRes.data   || [];
+      _renderBahanPage();
+    } else {
+      toastErr(res.message);
+    }
+  } catch (e) {
+    toastErr('Error: ' + e.message);
+  } finally {
+    _setLoading('btn-save-bahan', false);
+  }
+}
+
+async function toggleBahan(id, activate) {
+  const b = State.data.bahan.find(x => x.ID_BAHAN === id);
+  if (!b) return;
+
+  if (!activate) {
+    showConfirm(
+      'Nonaktifkan Bahan',
+      `"${b.NAMA_BAHAN}" akan dinonaktifkan. Bahan yang sudah di resep tidak terpengaruh. Lanjutkan?`,
+      () => _doToggleBahan(id, false)
+    );
+    return;
+  }
+  _doToggleBahan(id, true);
+}
+
+async function _doToggleBahan(id, activate) {
+  try {
+    const fn  = activate ? 'apiBahanReactivate' : 'apiBahanDeactivate';
+    const res = await callServer(fn, id);
+    if (res.success) {
+      toastOk(res.message);
+      const [bahanRes, supRes] = await Promise.all([
+        callServer('apiBahanGetAll', true),
+        callServer('apiSupplierGetAll', false),
+      ]);
+      State.data.bahan    = bahanRes.data || [];
+      State.data.supplier = supRes.data   || [];
+      _renderBahanPage();
+    } else {
+      toastErr(res.message);
+    }
+  } catch (e) {
+    toastErr(e.message);
+  }
+}
+
+
+// ─── Shared: Confirm Modal ────────────────────────────────────
+function _confirmModalHtml() {
+  return `
+    <div id="modal-confirm" class="modal-overlay hidden">
+      <div class="modal" style="max-width:400px">
+        <div class="modal-header">
+          <span id="confirm-title">Konfirmasi</span>
+          <button class="btn-close" onclick="closeModal('modal-confirm')">&times;</button>
+        </div>
+        <div class="modal-body confirm-body">
+          <div style="font-size:36px">⚠️</div>
+          <p id="confirm-msg"></p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="closeModal('modal-confirm')">Batal</button>
+          <button class="btn btn-danger" onclick="_execConfirm()">Ya, Lanjutkan</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+
+// ════════════════════════════════════════════════════════════
+// DASHBOARD
+// ════════════════════════════════════════════════════════════
+
+async function renderDashboard() {
+  const main = document.getElementById('main-content');
+  try {
+    const res = await callServer('apiGetDashboardSummary');
+    if (!res.success) throw new Error(res.message);
+    _renderDashboardPage(res.data);
+  } catch (e) {
+    main.innerHTML = '<p style="color:red;padding:24px">Error memuat dashboard: ' + _escHtml(e.message) + '</p>';
+  }
+}
+
+function _pct(val) {
+  return (Number(val) || 0).toFixed(1) + '%';
+}
+
+function _marginColor(pct) {
+  const v = Number(pct) || 0;
+  if (v >= 60) return '#22c55e';
+  if (v >= 40) return '#f59e0b';
+  if (v >= 20) return '#f97316';
+  return '#ef4444';
+}
+
+function _dashKpi(label, value, sub, accent, icon) {
+  return '<div class="dash-card">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start">'
+    + '<div>'
+    + '<div class="dash-kpi-label">' + _escHtml(label) + '</div>'
+    + '<div class="dash-kpi-value" style="color:' + accent + '">' + _escHtml(String(value)) + '</div>'
+    + (sub ? '<div class="dash-kpi-sub">' + _escHtml(String(sub)) + '</div>' : '')
+    + '</div>'
+    + '<div style="font-size:22px;opacity:.6;margin-top:2px">' + icon + '</div>'
+    + '</div></div>';
+}
+
+function _renderDashboardPage(d) {
+  const main = document.getElementById('main-content');
+
+  const lowStockHtml = (d.lowStockItems && d.lowStockItems.length > 0)
+    ? d.lowStockItems.map(function(s) {
+        var stok = Number(s.STOK_TERKINI) || 0;
+        var min  = Number(s.STOK_MINIMUM) || 1;
+        var rasio = min > 0 ? Math.round((stok / min) * 100) : 0;
+        var col = rasio < 50 ? '#ef4444' : '#f59e0b';
+        return '<div class="dash-alert-row" style="border-color:' + col + '44;background:' + col + '12">'
+          + '<span style="font-size:18px">🔻</span>'
+          + '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:#f1f5f9">' + _escHtml(s.NAMA_BAHAN || s.ID_BAHAN || '') + '</div>'
+          + '<div style="font-size:11px;color:#64748b">Stok: ' + stok + ' · Min: ' + min + '</div></div>'
+          + '<span style="font-size:12px;font-weight:700;color:' + col + '">' + rasio + '%</span></div>';
+      }).join('')
+    : '<div style="text-align:center;padding:20px 0;color:#334155;font-size:13px">✓ Semua stok mencukupi</div>';
+
+  const marginRendahHtml = (d.produkMarginRendah && d.produkMarginRendah.length > 0)
+    ? d.produkMarginRendah.map(function(p) {
+        var col = _marginColor(p.MARGIN_PCT);
+        return '<div class="dash-alert-row" style="border-color:' + col + '44;background:' + col + '12">'
+          + '<span style="font-size:18px">⚠️</span>'
+          + '<div style="flex:1"><div style="font-size:13px;font-weight:600;color:#f1f5f9">' + _escHtml(p.NAMA_PRODUK || '') + '</div>'
+          + '<div style="font-size:11px;color:#64748b">HPP: ' + _rupiah(p.HPP_PER_PCS) + ' · Jual: ' + _rupiah(p.HARGA_JUAL) + '</div></div>'
+          + '<span style="font-size:12px;font-weight:700;color:' + col + '">' + _pct(p.MARGIN_PCT) + '</span></div>';
+      }).join('')
+    : '<div style="text-align:center;padding:20px 0;color:#334155;font-size:13px">✓ Semua margin normal</div>';
+
+  const topMarginHtml = (d.topMargin && d.topMargin.length > 0)
+    ? d.topMargin.map(function(p) {
+        var col = _marginColor(p.MARGIN_PCT);
+        var w   = Math.min(Number(p.MARGIN_PCT) || 0, 100);
+        return '<div style="margin-bottom:14px">'
+          + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'
+          + '<span style="font-size:13px;font-weight:600;color:#e2e8f0">' + _escHtml(p.NAMA_PRODUK || '') + '</span>'
+          + '<span style="font-size:11px;font-weight:700;color:' + col + ';background:' + col + '22;border:1px solid ' + col + '44;padding:2px 8px;border-radius:20px">' + _pct(p.MARGIN_PCT) + '</span>'
+          + '</div>'
+          + '<div style="height:5px;background:#1e2840;border-radius:99px;overflow:hidden">'
+          + '<div style="height:100%;width:' + w + '%;background:' + col + ';border-radius:99px;transition:width .6s ease"></div></div></div>';
+      }).join('')
+    : '<div style="color:#334155;font-size:13px;padding:20px 0;text-align:center">Belum ada data HPP</div>';
+
+  const pembelianHtml = (d.pembelianTerbaru && d.pembelianTerbaru.length > 0)
+    ? '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+      + '<thead><tr style="color:#475569;border-bottom:1px solid #1e2840">'
+      + '<th style="padding:6px 4px;text-align:left;font-weight:600">Tanggal</th>'
+      + '<th style="padding:6px 4px;text-align:left;font-weight:600">Bahan</th>'
+      + '<th style="padding:6px 4px;text-align:right;font-weight:600">Qty</th>'
+      + '<th style="padding:6px 4px;text-align:right;font-weight:600">Total</th>'
+      + '</tr></thead><tbody>'
+      + d.pembelianTerbaru.map(function(p) {
+          var tgl = p.TANGGAL ? String(p.TANGGAL).substring(0, 10) : '-';
+          return '<tr style="border-bottom:1px solid #0f172a">'
+            + '<td style="padding:6px 4px;color:#64748b">' + _escHtml(tgl) + '</td>'
+            + '<td style="padding:6px 4px;color:#e2e8f0">' + _escHtml(p.NAMA_BAHAN || '') + '</td>'
+            + '<td style="padding:6px 4px;text-align:right;color:#94a3b8">' + (p.QTY_BELI || 0) + ' ' + _escHtml(p.SATUAN_BELI || '') + '</td>'
+            + '<td style="padding:6px 4px;text-align:right;color:#f97316;font-weight:600">' + _rupiah(p.TOTAL_HARGA) + '</td>'
+            + '</tr>';
+        }).join('')
+      + '</tbody></table>'
+    : '<div style="text-align:center;padding:20px 0;color:#334155;font-size:13px">Belum ada data pembelian</div>';
+
+  var alertTotal = (d.lowStockItems ? d.lowStockItems.length : 0)
+                 + (d.produkMarginRendah ? d.produkMarginRendah.length : 0);
+  var alertColor = alertTotal > 0 ? '#ef4444' : '#22c55e';
+
+  main.innerHTML = '<style>'
+    + '.dash-kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}'
+    + '.dash-mid-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px}'
+    + '.dash-bot-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}'
+    + '.dash-card{background:#161927;border:1px solid #1e2840;border-radius:14px;padding:20px}'
+    + '.dash-kpi-label{font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px}'
+    + '.dash-kpi-value{font-size:24px;font-weight:800;letter-spacing:-.03em;line-height:1}'
+    + '.dash-kpi-sub{font-size:12px;color:#475569;margin-top:5px}'
+    + '.dash-section-title{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px}'
+    + '.dash-alert-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;border:1px solid;margin-bottom:8px}'
+    + '.dash-count-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #1e2840;font-size:13px}'
+    + '@media(max-width:1100px){.dash-kpi-grid{grid-template-columns:repeat(2,1fr)}.dash-mid-grid{grid-template-columns:1fr 1fr}}'
+    + '@media(max-width:680px){.dash-kpi-grid{grid-template-columns:1fr 1fr}.dash-mid-grid{grid-template-columns:1fr}.dash-bot-grid{grid-template-columns:1fr}}'
+    + '</style>'
+    + '<div class="page-header"><div><div class="page-title">Dashboard</div>'
+    + '<div class="page-subtitle">Ringkasan operasional · ' + _escHtml(String(d.lastUpdated || '').substring(0,19).replace('T',' ')) + '</div></div>'
+    + '<button class="btn btn-primary" onclick="renderDashboard()">↻ Refresh</button></div>'
+
+    + '<div class="dash-kpi-grid">'
+    + _dashKpi('Total Bahan', d.totalBahan, d.totalProdukBerResep + ' produk punya resep', '#f97316', '📦')
+    + _dashKpi('Avg Margin', _pct(d.avgMargin), 'rata-rata seluruh produk', _marginColor(d.avgMargin), '📊')
+    + _dashKpi('Nilai Stok', _rupiah(d.totalNilaiStok), 'estimasi nilai inventory', '#22c55e', '💰')
+    + _dashKpi('Pembelian Bln Ini', _rupiah(d.totalPembelianBulanIni), (d.jumlahTransaksiPembelian || 0) + ' transaksi', '#a78bfa', '🛒')
+    + '</div>'
+
+    + '<div class="dash-kpi-grid">'
+    + _dashKpi('Produk', d.totalProduk, 'aktif', '#64748b', '🥟')
+    + _dashKpi('Supplier', d.totalSupplier, 'aktif', '#64748b', '🚚')
+    + _dashKpi('Item Resep', d.totalResepItems, 'baris di resep', '#64748b', '📋')
+    + _dashKpi('Alert', alertTotal, (d.lowStockItems ? d.lowStockItems.length : 0) + ' stok · ' + (d.produkMarginRendah ? d.produkMarginRendah.length : 0) + ' margin rendah', alertColor, '⚠️')
+    + '</div>'
+
+    + '<div class="dash-mid-grid">'
+    + '<div class="dash-card"><div class="dash-section-title">📈 Top Margin Produk</div>' + topMarginHtml + '</div>'
+    + '<div class="dash-card"><div class="dash-section-title">⚠️ Stok Kritis</div>' + lowStockHtml + '</div>'
+    + '<div class="dash-card"><div class="dash-section-title">🔻 Margin Rendah (&lt;20%)</div>' + marginRendahHtml + '</div>'
+    + '</div>'
+
+    + '<div class="dash-bot-grid">'
+    + '<div class="dash-card"><div class="dash-section-title">🛒 Pembelian Terbaru</div>' + pembelianHtml + '</div>'
+    + '<div class="dash-card"><div class="dash-section-title">📊 Ringkasan Master</div>'
+    + '<div class="dash-count-row"><span style="color:#94a3b8">Bahan Baku</span><span style="color:#f97316;font-weight:700">' + (d.totalBahan || 0) + '</span></div>'
+    + '<div class="dash-count-row"><span style="color:#94a3b8">Produk</span><span style="color:#f97316;font-weight:700">' + (d.totalProduk || 0) + '</span></div>'
+    + '<div class="dash-count-row"><span style="color:#94a3b8">Supplier</span><span style="color:#f97316;font-weight:700">' + (d.totalSupplier || 0) + '</span></div>'
+    + '<div class="dash-count-row"><span style="color:#94a3b8">Produk Berresep</span><span style="color:#22c55e;font-weight:700">' + (d.totalProdukBerResep || 0) + '</span></div>'
+    + '<div class="dash-count-row"><span style="color:#94a3b8">Total Item Resep</span><span style="color:#22c55e;font-weight:700">' + (d.totalResepItems || 0) + '</span></div>'
+    + '<div class="dash-count-row" style="border:none"><span style="color:#94a3b8">Avg Margin</span><span style="font-weight:700;color:' + _marginColor(d.avgMargin) + '">' + _pct(d.avgMargin) + '</span></div>'
+    + '</div>'
+    + '</div>'
+    + '<div style="margin-top:20px;text-align:center;font-size:11px;color:#1e2840">Dashboard · KCC</div>';
+}
+
+
+// ════════════════════════════════════════════════════════════
+// RESEP
+// ════════════════════════════════════════════════════════════
+
+async function renderResep() {
+  const main = document.getElementById('main-content');
+  try {
+    const [produkRes, bahanRes] = await Promise.all([
+      callServer('apiProdukGetAll', false),
+      callServer('apiBahanGetAll', false),
+    ]);
+    State.data.produk = produkRes.data || [];
+    State.data.bahan  = bahanRes.data  || [];
+    _renderResepPage();
+  } catch (e) {
+    main.innerHTML = '<p style="color:red;padding:24px">Error: ' + _escHtml(e.message) + '</p>';
+  }
+}
+
+function _renderResepPage() {
+  const main      = document.getElementById('main-content');
+  const produkList = State.data.produk.filter(function(p){ return String(p.AKTIF) !== 'FALSE'; });
+  if (!State._resepSelectedId && produkList.length > 0) {
+    State._resepSelectedId = produkList[0].ID_PRODUK;
+  }
+  const selectedId = State._resepSelectedId || '';
+
+  const produkOpsi = produkList.map(function(p) {
+    return '<option value="' + _escHtml(p.ID_PRODUK) + '"' + (p.ID_PRODUK === selectedId ? ' selected' : '') + '>'
+      + _escHtml(p.NAMA_PRODUK) + ' (' + _escHtml(p.ID_PRODUK) + ')</option>';
+  }).join('');
+
+  main.innerHTML = '<div class="page-header"><div>'
+    + '<div class="page-title">📋 Resep</div>'
+    + '<div class="page-subtitle">Kelola komposisi bahan per produk</div></div></div>'
+    + '<div class="card" style="margin-bottom:16px">'
+    + '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">'
+    + '<label style="font-weight:600;font-size:13px;color:#94a3b8">Pilih Produk:</label>'
+    + '<select id="resep-produk-select" style="min-width:240px;padding:8px 12px;background:#0f172a;border:1px solid #1e2840;border-radius:8px;color:#e2e8f0;font-size:13px" onchange="onResepProdukChange(this.value)">'
+    + produkOpsi + '</select>'
+    + '<button class="btn btn-primary" onclick="loadResepDetail()">Lihat Resep</button>'
+    + '<button class="btn btn-ghost" onclick="openFormResepItem()">+ Tambah Bahan</button>'
+    + '</div></div>'
+    + '<div id="resep-detail-area"><div class="loading"><div class="spinner"></div> Memuat resep...</div></div>';
+
+  if (selectedId) loadResepDetail();
+}
+
+function onResepProdukChange(idProduk) {
+  State._resepSelectedId = idProduk;
+  loadResepDetail();
+}
+
+async function loadResepDetail() {
+  const idProduk = State._resepSelectedId;
+  if (!idProduk) return;
+  const area = document.getElementById('resep-detail-area');
+  if (area) area.innerHTML = '<div class="loading"><div class="spinner"></div> Memuat resep...</div>';
+  try {
+    const res = await callServer('apiGetResepLengkap', idProduk);
+    if (!res.success) throw new Error(res.message);
+    State.data.resep[idProduk] = res.data;
+    _renderResepDetail(res.data);
+  } catch (e) {
+    if (area) area.innerHTML = '<div class="card"><p style="color:#f59e0b;padding:8px 0">⚠️ ' + _escHtml(e.message) + '</p>'
+      + '<button class="btn btn-ghost" onclick="openFormResepItem()">+ Tambah Bahan Pertama</button>'
+      + _resepItemModalHtml() + _confirmModalHtml() + '</div>';
+  }
+}
+
+function _renderResepDetail(d) {
+  const area = document.getElementById('resep-detail-area');
+  if (!area) return;
+  const items = d.DETAIL_BAHAN || [];
+  const rowsHtml = items.length === 0
+    ? '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-text">Belum ada bahan. Klik "+ Tambah Bahan" untuk mulai.</div></div></td></tr>'
+    : items.map(function(item) {
+        const biaya    = Number(item.BIAYA_BAHAN) || 0;
+        const pctBiaya = d.HPP_PER_BATCH > 0 ? ((biaya / d.HPP_PER_BATCH) * 100).toFixed(1) : '0';
+        return '<tr>'
+          + '<td>' + _escHtml(item.ID_BAHAN || '') + '</td>'
+          + '<td style="font-weight:600">' + _escHtml(item.NAMA_BAHAN || '') + '</td>'
+          + '<td style="text-align:right">' + (item.JUMLAH || 0) + ' ' + _escHtml(item.SATUAN_PAKAI || '') + '</td>'
+          + '<td style="text-align:right">' + _rupiah(item.HARGA_RATA2) + '</td>'
+          + '<td style="text-align:right;color:#f97316;font-weight:600">' + _rupiah(biaya) + ' <span style="color:#475569;font-size:10px">(' + pctBiaya + '%)</span></td>'
+          + '<td style="text-align:right">'
+          + '<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px" onclick="editResepItem(\'' + _escHtml(item.ID_RESEP || '') + '\')">Edit</button> '
+          + '<button class="btn btn-danger" style="padding:3px 8px;font-size:11px" onclick="deleteResepItem(\'' + _escHtml(item.ID_RESEP || '') + '\',\'' + _escHtml((item.NAMA_BAHAN || '').replace(/'/g,"&#39;")) + '\')">Hapus</button>'
+          + '</td></tr>';
+      }).join('');
+
+  const mCol = _marginColor(d.MARGIN_PCT || 0);
+  area.innerHTML = '<div class="card">'
+    + '<div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:20px">'
+    + '<div style="background:#0f172a;border-radius:10px;padding:12px 18px;min-width:130px"><div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:4px">HPP / Batch</div><div style="font-size:18px;font-weight:800;color:#f97316">' + _rupiah(d.HPP_PER_BATCH) + '</div></div>'
+    + '<div style="background:#0f172a;border-radius:10px;padding:12px 18px;min-width:130px"><div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:4px">HPP / Pcs (Yield ' + (d.YIELD_PCS || 1) + ')</div><div style="font-size:18px;font-weight:800;color:#f97316">' + _rupiah(d.HPP_PER_PCS) + '</div></div>'
+    + '<div style="background:#0f172a;border-radius:10px;padding:12px 18px;min-width:130px"><div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:4px">Harga Jual</div><div style="font-size:18px;font-weight:800;color:#e2e8f0">' + _rupiah(d.HARGA_JUAL) + '</div></div>'
+    + '<div style="background:#0f172a;border-radius:10px;padding:12px 18px;min-width:130px"><div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:4px">Margin</div><div style="font-size:18px;font-weight:800;color:' + mCol + '">' + _pct(d.MARGIN_PCT) + '</div></div>'
+    + '</div>'
+    + '<div class="table-wrap"><table>'
+    + '<thead><tr><th>ID Bahan</th><th>Nama Bahan</th><th style="text-align:right">Jumlah</th><th style="text-align:right">Harga/Satuan</th><th style="text-align:right">Biaya</th><th style="text-align:right">Aksi</th></tr></thead>'
+    + '<tbody>' + rowsHtml + '</tbody></table></div>'
+    + '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e2840;text-align:right">'
+    + '<span style="font-size:12px;color:#64748b">Total Biaya: </span>'
+    + '<span style="font-size:16px;font-weight:800;color:#f97316">' + _rupiah(d.HPP_PER_BATCH) + '</span></div>'
+    + '</div>'
+    + _resepItemModalHtml()
+    + _confirmModalHtml();
+}
+
+function openFormResepItem(idResep, existing) {
+  const produkId = State._resepSelectedId;
+  if (!produkId) { toastErr('Pilih produk terlebih dahulu'); return; }
+  const modalEl = document.getElementById('modal-resep-item');
+  if (!modalEl) return;
+  const bahanOpsi = State.data.bahan.map(function(b) {
+    return '<option value="' + _escHtml(b.ID_BAHAN) + '"' + (existing && existing.ID_BAHAN === b.ID_BAHAN ? ' selected' : '') + '>'
+      + _escHtml(b.NAMA_BAHAN) + ' (' + _escHtml(b.SATUAN_PAKAI || b.SATUAN_BELI || '') + ')</option>';
+  }).join('');
+  document.getElementById('ri-id').value      = idResep || '';
+  document.getElementById('ri-produk').value  = produkId;
+  document.getElementById('ri-jumlah').value  = existing ? (existing.JUMLAH || '') : '';
+  document.getElementById('ri-satuan').value  = existing ? (existing.SATUAN_PAKAI || '') : '';
+  document.getElementById('ri-catatan').value = existing ? (existing.CATATAN || '') : '';
+  document.getElementById('ri-bahan').innerHTML = bahanOpsi;
+  document.getElementById('modal-resep-item-title').textContent = idResep ? 'Edit Bahan Resep' : 'Tambah Bahan ke Resep';
+  openModal('modal-resep-item');
+}
+
+function editResepItem(idResep) {
+  const produkId  = State._resepSelectedId;
+  const resepData = State.data.resep[produkId];
+  if (!resepData) return;
+  const item = (resepData.DETAIL_BAHAN || []).find(function(x){ return x.ID_RESEP === idResep; });
+  if (!item) return;
+  openFormResepItem(idResep, item);
+}
+
+async function saveResepItem() {
+  const idResep  = document.getElementById('ri-id').value;
+  const idProduk = document.getElementById('ri-produk').value;
+  const idBahan  = document.getElementById('ri-bahan').value;
+  const jumlah   = Number(document.getElementById('ri-jumlah').value);
+  const satuan   = document.getElementById('ri-satuan').value.trim();
+  const catatan  = document.getElementById('ri-catatan').value.trim();
+
+  if (!idBahan) { toastErr('Pilih bahan'); return; }
+  if (!jumlah || jumlah <= 0) { toastErr('Jumlah harus > 0'); return; }
+
+  _setLoading('btn-save-resep-item', true);
+  try {
+    const data = { ID_PRODUK: idProduk, ID_BAHAN: idBahan, JUMLAH: jumlah, SATUAN: satuan, CATATAN: catatan };
+    const res  = idResep
+      ? await callServer('apiResepUpdateItem', idResep, data)
+      : await callServer('apiResepAddItem', data);
+    if (res.success) {
+      toastOk(res.message);
+      closeModal('modal-resep-item');
+      await loadResepDetail();
+    } else {
+      toastErr(res.message);
+    }
+  } catch (e) {
+    toastErr('Error: ' + e.message);
+  } finally {
+    _setLoading('btn-save-resep-item', false);
+  }
+}
+
+async function deleteResepItem(idResep, namaBahan) {
+  showConfirm('Hapus Bahan', '"' + namaBahan + '" akan dihapus dari resep. Lanjutkan?', async function() {
+    try {
+      const res = await callServer('apiResepDeleteItem', idResep);
+      if (res.success) { toastOk(res.message); await loadResepDetail(); }
+      else toastErr(res.message);
+    } catch (e) { toastErr(e.message); }
+  });
+}
+
+function _resepItemModalHtml() {
+  return '<div id="modal-resep-item" class="modal-overlay hidden"><div class="modal" style="max-width:480px">'
+    + '<div class="modal-header"><span id="modal-resep-item-title">Bahan Resep</span>'
+    + '<button class="btn-close" onclick="closeModal(\'modal-resep-item\')">&times;</button></div>'
+    + '<div class="modal-body">'
+    + '<input type="hidden" id="ri-id"><input type="hidden" id="ri-produk">'
+    + '<div class="form-group"><label class="form-label">Bahan *</label>'
+    + '<select id="ri-bahan" class="form-control"></select></div>'
+    + '<div class="form-group"><label class="form-label">Jumlah *</label>'
+    + '<input id="ri-jumlah" class="form-control" type="number" min="0" step="any" placeholder="contoh: 250"></div>'
+    + '<div class="form-group"><label class="form-label">Satuan Pakai</label>'
+    + '<input id="ri-satuan" class="form-control" placeholder="gram, ml, pcs ... (opsional)"></div>'
+    + '<div class="form-group"><label class="form-label">Catatan</label>'
+    + '<input id="ri-catatan" class="form-control" placeholder="catatan opsional"></div>'
+    + '</div>'
+    + '<div class="modal-footer">'
+    + '<button class="btn btn-ghost" onclick="closeModal(\'modal-resep-item\')">Batal</button>'
+    + '<button class="btn btn-primary" id="btn-save-resep-item" onclick="saveResepItem()">Simpan</button>'
+    + '</div></div></div>';
+}
+
+
+// ════════════════════════════════════════════════════════════
+// HPP & MARGIN
+// ════════════════════════════════════════════════════════════
+
+async function renderHPP() {
+  const main = document.getElementById('main-content');
+  try {
+    const res = await callServer('apiGetRingkasanHPPSemua');
+    if (!res.success) throw new Error(res.message);
+    State.data.hpp = res.data || [];
+    _renderHPPPage();
+  } catch (e) {
+    main.innerHTML = '<p style="color:red;padding:24px">Error: ' + _escHtml(e.message) + '</p>';
+  }
+}
+
+function _renderHPPPage() {
+  const main = document.getElementById('main-content');
+  const f    = State.filter.hpp;
+  let rows   = State.data.hpp;
+
+  if (f.q) {
+    const q = f.q.toLowerCase();
+    rows = rows.filter(function(p){ return (p.NAMA_PRODUK || '').toLowerCase().includes(q) || (p.ID_PRODUK || '').toLowerCase().includes(q); });
+  }
+  if (f.kategori) rows = rows.filter(function(p){ return p.KATEGORI === f.kategori; });
+
+  const kats   = _uniqueKategori(State.data.hpp, 'KATEGORI');
+  const katOpsi = ['<option value="">Semua Kategori</option>']
+    .concat(kats.map(function(k){ return '<option value="' + _escHtml(k) + '"' + (f.kategori === k ? ' selected' : '') + '>' + _escHtml(k) + '</option>'; })).join('');
+
+  const valid = State.data.hpp.filter(function(p){ return p.STATUS_RESEP === 'ADA' && p.HARGA_JUAL > 0; });
+  const avgMargin = valid.length > 0
+    ? (valid.reduce(function(s, p){ return s + p.MARGIN_PCT; }, 0) / valid.length).toFixed(1) : 0;
+
+  const rowsHtml = rows.length === 0
+    ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-state-icon">🧮</div><div class="empty-state-text">Tidak ada data HPP.</div></div></td></tr>'
+    : rows.map(function(p) {
+        const hasResep = p.STATUS_RESEP === 'ADA';
+        const mCol     = _marginColor(p.MARGIN_PCT);
+        return '<tr>'
+          + '<td>' + _escHtml(p.ID_PRODUK || '') + '</td>'
+          + '<td style="font-weight:600">' + _escHtml(p.NAMA_PRODUK || '') + '</td>'
+          + '<td>' + _escHtml(p.KATEGORI || '') + '</td>'
+          + '<td style="text-align:right">' + _rupiah(p.HARGA_JUAL) + '</td>'
+          + '<td style="text-align:right;color:#f97316;font-weight:600">' + (hasResep ? _rupiah(p.HPP_PER_PCS) : '—') + '</td>'
+          + '<td style="text-align:right;color:#22c55e;font-weight:600">' + (hasResep ? _rupiah(p.MARGIN_RP) : '—') + '</td>'
+          + '<td style="text-align:right">'
+          + (hasResep
+            ? '<span style="color:' + mCol + ';font-weight:700;background:' + mCol + '22;border:1px solid ' + mCol + '44;padding:2px 8px;border-radius:20px;font-size:11px">' + _pct(p.MARGIN_PCT) + '</span>'
+            : '<span style="color:#475569;font-size:11px">Belum ada resep</span>')
+          + '</td>'
+          + '<td style="text-align:right">'
+          + (hasResep
+            ? '<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px" onclick="hitungDanSimpanHPP(\'' + _escHtml(p.ID_PRODUK) + '\')">Hitung Ulang</button>'
+            : '<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px" onclick="navigate(\'resep\')">Buat Resep</button>')
+          + '</td></tr>';
+      }).join('');
+
+  main.innerHTML = '<div class="page-header"><div>'
+    + '<div class="page-title">🧮 HPP &amp; Margin</div>'
+    + '<div class="page-subtitle">Avg margin: <strong style="color:' + _marginColor(avgMargin) + '">' + _pct(avgMargin) + '</strong></div></div>'
+    + '<div style="display:flex;gap:8px">'
+    + '<button class="btn btn-ghost" onclick="renderHPP()">↻ Refresh</button>'
+    + '<button class="btn btn-primary" onclick="recalcSemuaHPP()">⚡ Hitung Ulang Semua</button>'
+    + '</div></div>'
+    + '<div class="card">'
+    + '<div class="filter-bar">'
+    + '<input type="search" placeholder="Cari produk..." value="' + _escHtml(f.q) + '" oninput="State.filter.hpp.q=this.value;_renderHPPPage()">'
+    + '<label>Kategori: <select onchange="State.filter.hpp.kategori=this.value;_renderHPPPage()">' + katOpsi + '</select></label>'
+    + '<span style="margin-left:auto;font-size:12px;color:var(--c-muted)">' + rows.length + ' ditampilkan</span>'
+    + '</div>'
+    + '<div class="table-wrap"><table>'
+    + '<thead><tr><th>ID</th><th>Nama Produk</th><th>Kategori</th><th style="text-align:right">Harga Jual</th><th style="text-align:right">HPP/Pcs</th><th style="text-align:right">Margin Rp</th><th style="text-align:right">Margin %</th><th style="text-align:right">Aksi</th></tr></thead>'
+    + '<tbody>' + rowsHtml + '</tbody></table></div></div>'
+    + _confirmModalHtml();
+}
+
+async function hitungDanSimpanHPP(idProduk) {
+  try {
+    toastMsg('Menghitung HPP...');
+    const res = await callServer('apiHitungDanSimpanHPP', idProduk);
+    if (res.success) {
+      toastOk('HPP berhasil: ' + _rupiah(res.data ? res.data.HPP_PER_PCS : 0) + '/pcs');
+      await renderHPP();
+    } else toastErr(res.message);
+  } catch (e) { toastErr('Error: ' + e.message); }
+}
+
+async function recalcSemuaHPP() {
+  try {
+    toastMsg('Menghitung ulang semua HPP...');
+    const res = await callServer('apiRecalcSemuaHPP');
+    if (res.success) { toastOk(res.message || 'Semua HPP berhasil dihitung'); await renderHPP(); }
+    else toastErr(res.message);
+  } catch (e) { toastErr('Error: ' + e.message); }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// INVENTORY
+// ════════════════════════════════════════════════════════════
+
+async function renderInventory() {
+  const main = document.getElementById('main-content');
+  try {
+    const [invRes, bahanRes] = await Promise.all([
+      callServer('apiInvGetSummary'),
+      callServer('apiBahanGetAll', false),
+    ]);
+    State.data.inventory = invRes.success ? invRes.data : null;
+    State.data.bahan     = bahanRes.data || [];
+    _renderInventoryPage();
+  } catch (e) {
+    main.innerHTML = '<p style="color:red;padding:24px">Error: ' + _escHtml(e.message) + '</p>';
+  }
+}
+
+function _renderInventoryPage() {
+  const main  = document.getElementById('main-content');
+  const inv   = State.data.inventory;
+  const f     = State.filter.inventory;
+  const items = (inv && inv.items) ? inv.items : [];
+  let rows    = items;
+
+  if (f.q) {
+    const q = f.q.toLowerCase();
+    rows = rows.filter(function(s){ return (s.NAMA_BAHAN || s.ID_BAHAN || '').toLowerCase().includes(q); });
+  }
+
+  const totalNilai = inv ? (inv.totalNilaiStok || 0) : 0;
+  const stokKritis = items.filter(function(s){
+    const min = Number(s.STOK_MINIMUM) || 0;
+    return Number(s.STOK_TERKINI) < min && min > 0;
+  }).length;
+
+  const rowsHtml = rows.length === 0
+    ? '<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">📦</div><div class="empty-state-text">Belum ada data stok. Jalankan setupInventory() terlebih dahulu.</div></div></td></tr>'
+    : rows.map(function(s) {
+        const stok  = Number(s.STOK_TERKINI) || 0;
+        const min   = Number(s.STOK_MINIMUM)  || 0;
+        const nilai = Number(s.NILAI_STOK)    || 0;
+        const rasio = min > 0 ? stok / min : 999;
+        const col   = rasio < 0.5 ? '#ef4444' : rasio < 1 ? '#f59e0b' : '#22c55e';
+        const badge = (rasio < 1 && min > 0)
+          ? '<span style="color:' + col + ';font-size:10px;font-weight:700;background:' + col + '22;padding:2px 6px;border-radius:12px;margin-left:6px">KRITIS</span>' : '';
+        return '<tr>'
+          + '<td>' + _escHtml(s.ID_BAHAN || '') + '</td>'
+          + '<td style="font-weight:600">' + _escHtml(s.NAMA_BAHAN || s.ID_BAHAN || '') + badge + '</td>'
+          + '<td style="text-align:right;color:' + col + ';font-weight:700">' + stok + '</td>'
+          + '<td style="text-align:right;color:#64748b">' + (min || '—') + '</td>'
+          + '<td>' + _escHtml(s.SATUAN_BELI || '') + '</td>'
+          + '<td style="text-align:right;color:#f97316;font-weight:600">' + _rupiah(nilai) + '</td>'
+          + '<td style="text-align:right">'
+          + '<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px" onclick="lihatStockCard(\'' + _escHtml(s.ID_BAHAN || '') + '\')">Kartu Stok</button> '
+          + '<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px" onclick="openFormAdjustment(\'' + _escHtml(s.ID_BAHAN || '') + '\',\'' + _escHtml((s.NAMA_BAHAN || s.ID_BAHAN || '').replace(/'/g,"&#39;")) + '\')">Adj.</button>'
+          + '</td></tr>';
+      }).join('');
+
+  main.innerHTML = '<div class="page-header"><div>'
+    + '<div class="page-title">📈 Inventory</div>'
+    + '<div class="page-subtitle">Stok bahan baku · Nilai: <strong style="color:#22c55e">' + _rupiah(totalNilai) + '</strong></div></div>'
+    + '<div style="display:flex;gap:8px">'
+    + '<button class="btn btn-ghost" onclick="renderInventory()">↻ Refresh</button>'
+    + '<button class="btn btn-primary" onclick="navigate(\'pembelian\')">+ Catat Pembelian</button>'
+    + '</div></div>'
+
+    + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">'
+    + _dashKpi('Total Item', items.length, 'bahan dipantau', '#f97316', '📦')
+    + _dashKpi('Nilai Stok', _rupiah(totalNilai), 'estimasi harga pasar', '#22c55e', '💰')
+    + _dashKpi('Stok Kritis', stokKritis, 'di bawah minimum', stokKritis > 0 ? '#ef4444' : '#22c55e', '⚠️')
+    + '</div>'
+
+    + '<div class="card">'
+    + '<div class="filter-bar">'
+    + '<input type="search" placeholder="Cari bahan..." value="' + _escHtml(f.q) + '" oninput="State.filter.inventory.q=this.value;_renderInventoryPage()">'
+    + '<span style="margin-left:auto;font-size:12px;color:var(--c-muted)">' + rows.length + ' item</span>'
+    + '</div>'
+    + '<div class="table-wrap"><table>'
+    + '<thead><tr><th>ID Bahan</th><th>Nama Bahan</th><th style="text-align:right">Stok</th><th style="text-align:right">Min</th><th>Satuan</th><th style="text-align:right">Nilai Stok</th><th style="text-align:right">Aksi</th></tr></thead>'
+    + '<tbody>' + rowsHtml + '</tbody></table></div></div>'
+    + _stockCardModalHtml()
+    + _adjustmentModalHtml()
+    + _confirmModalHtml();
+}
+
+async function lihatStockCard(idBahan) {
+  try {
+    const res = await callServer('apiInvGetStockCard', idBahan);
+    if (!res.success) throw new Error(res.message);
+    const sc = res.data;
+    const mvHtml = (sc.movements && sc.movements.length > 0)
+      ? sc.movements.slice().reverse().map(function(m) {
+          const col = m.TIPE === 'IN' ? '#22c55e' : '#ef4444';
+          const tgl = String(m.TANGGAL || '').substring(0, 10);
+          return '<tr>'
+            + '<td style="color:#64748b">' + _escHtml(tgl) + '</td>'
+            + '<td style="color:' + col + ';font-weight:700">' + _escHtml(m.TIPE || '') + '</td>'
+            + '<td style="text-align:right;color:' + col + '">' + (Number(m.QTY) || 0) + '</td>'
+            + '<td style="text-align:right">' + (Number(m.SALDO_AKHIR) || 0) + '</td>'
+            + '<td>' + _escHtml(m.REFERENSI || '') + '</td>'
+            + '<td style="color:#475569;font-size:11px">' + _escHtml(m.CATATAN || '') + '</td>'
+            + '</tr>';
+        }).join('')
+      : '<tr><td colspan="6" style="text-align:center;padding:20px;color:#334155">Belum ada mutasi stok</td></tr>';
+
+    document.getElementById('stock-card-title').textContent = 'Kartu Stok — ' + (sc.NAMA_BAHAN || idBahan);
+    document.getElementById('stock-card-body').innerHTML =
+      '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">'
+      + '<div style="background:#0f172a;border-radius:8px;padding:10px 16px"><div style="font-size:10px;color:#64748b;margin-bottom:3px">STOK TERKINI</div><div style="font-size:18px;font-weight:800;color:#f97316">' + (sc.STOK_TERKINI || 0) + ' ' + _escHtml(sc.SATUAN_BELI || '') + '</div></div>'
+      + '<div style="background:#0f172a;border-radius:8px;padding:10px 16px"><div style="font-size:10px;color:#64748b;margin-bottom:3px">HARGA RATA2</div><div style="font-size:18px;font-weight:800;color:#22c55e">' + _rupiah(sc.HARGA_RATA2) + '</div></div>'
+      + '<div style="background:#0f172a;border-radius:8px;padding:10px 16px"><div style="font-size:10px;color:#64748b;margin-bottom:3px">NILAI STOK</div><div style="font-size:18px;font-weight:800;color:#a78bfa">' + _rupiah(sc.NILAI_STOK) + '</div></div>'
+      + '</div>'
+      + '<div class="table-wrap"><table><thead><tr><th>Tanggal</th><th>Tipe</th><th style="text-align:right">Qty</th><th style="text-align:right">Saldo</th><th>Referensi</th><th>Catatan</th></tr></thead><tbody>' + mvHtml + '</tbody></table></div>';
+    openModal('modal-stock-card');
+  } catch (e) {
+    toastErr('Gagal memuat kartu stok: ' + e.message);
+  }
+}
+
+function _stockCardModalHtml() {
+  return '<div id="modal-stock-card" class="modal-overlay hidden"><div class="modal" style="max-width:700px">'
+    + '<div class="modal-header"><span id="stock-card-title">Kartu Stok</span>'
+    + '<button class="btn-close" onclick="closeModal(\'modal-stock-card\')">&times;</button></div>'
+    + '<div class="modal-body" id="stock-card-body"></div>'
+    + '<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal(\'modal-stock-card\')">Tutup</button></div>'
+    + '</div></div>';
+}
+
+function openFormAdjustment(idBahan, namaBahan) {
+  document.getElementById('adj-id-bahan').value = idBahan;
+  document.getElementById('adj-nama-bahan').textContent = namaBahan;
+  document.getElementById('adj-qty').value     = '';
+  document.getElementById('adj-catatan').value = '';
+  openModal('modal-adjustment');
+}
+
+async function saveAdjustment() {
+  const idBahan = document.getElementById('adj-id-bahan').value;
+  const qty     = Number(document.getElementById('adj-qty').value);
+  const catatan = document.getElementById('adj-catatan').value.trim();
+  if (!qty || qty === 0) { toastErr('Qty tidak boleh 0'); return; }
+  _setLoading('btn-save-adjustment', true);
+  try {
+    const res = await callServer('apiInvAdjustment', { ID_BAHAN: idBahan, QTY: qty, CATATAN: catatan });
+    if (res.success) {
+      toastOk('Adjustment berhasil disimpan');
+      closeModal('modal-adjustment');
+      await renderInventory();
+    } else toastErr(res.message);
+  } catch (e) { toastErr('Error: ' + e.message); }
+  finally { _setLoading('btn-save-adjustment', false); }
+}
+
+function _adjustmentModalHtml() {
+  return '<div id="modal-adjustment" class="modal-overlay hidden"><div class="modal" style="max-width:420px">'
+    + '<div class="modal-header"><span>Stock Adjustment</span>'
+    + '<button class="btn-close" onclick="closeModal(\'modal-adjustment\')">&times;</button></div>'
+    + '<div class="modal-body">'
+    + '<input type="hidden" id="adj-id-bahan">'
+    + '<div class="form-group"><label class="form-label">Bahan</label>'
+    + '<div id="adj-nama-bahan" style="font-weight:700;color:#f97316;padding:8px 0"></div></div>'
+    + '<div class="form-group"><label class="form-label">Qty Adjustment *</label>'
+    + '<input id="adj-qty" class="form-control" type="number" step="any" placeholder="+ masuk / - keluar">'
+    + '<span class="form-hint">Nilai negatif = pengurangan stok</span></div>'
+    + '<div class="form-group"><label class="form-label">Catatan</label>'
+    + '<input id="adj-catatan" class="form-control" placeholder="alasan adjustment..."></div>'
+    + '</div>'
+    + '<div class="modal-footer">'
+    + '<button class="btn btn-ghost" onclick="closeModal(\'modal-adjustment\')">Batal</button>'
+    + '<button class="btn btn-primary" id="btn-save-adjustment" onclick="saveAdjustment()">Simpan</button>'
+    + '</div></div></div>';
+}
+
+
+// ════════════════════════════════════════════════════════════
+// PEMBELIAN
+// ════════════════════════════════════════════════════════════
+
+async function renderPembelian() {
+  const main = document.getElementById('main-content');
+  try {
+    const [purchaseRes, bahanRes, supRes] = await Promise.all([
+      callServer('apiInvPurchaseGetAll'),
+      callServer('apiBahanGetAll', false),
+      callServer('apiSupplierGetAll', false),
+    ]);
+    State.data.pembelian = (purchaseRes.success ? purchaseRes.data : []) || [];
+    State.data.bahan     = bahanRes.data  || [];
+    State.data.supplier  = supRes.data    || [];
+    _renderPembelianPage();
+  } catch (e) {
+    main.innerHTML = '<p style="color:red;padding:24px">Error: ' + _escHtml(e.message) + '</p>';
+  }
+}
+
+function _renderPembelianPage() {
+  const main = document.getElementById('main-content');
+  const f    = State.filter.pembelian;
+  let rows   = State.data.pembelian;
+
+  if (f.q) {
+    const q = f.q.toLowerCase();
+    rows = rows.filter(function(p){
+      return (p.NAMA_BAHAN || p.ID_BAHAN || '').toLowerCase().includes(q)
+          || (p.NAMA_SUPPLIER || p.ID_SUPPLIER || '').toLowerCase().includes(q)
+          || (p.ID_PURCHASE || '').toLowerCase().includes(q);
+    });
+  }
+  if (f.bulan) rows = rows.filter(function(p){ return p.TANGGAL && String(p.TANGGAL).startsWith(f.bulan); });
+
+  const aktif      = rows.filter(function(p){ return String(p.STATUS) !== 'VOID'; });
+  const totalNilai = aktif.reduce(function(s, p){ return s + (Number(p.TOTAL_HARGA) || 0); }, 0);
+
+  const bulanSet = new Set();
+  State.data.pembelian.forEach(function(p){ if (p.TANGGAL) bulanSet.add(String(p.TANGGAL).substring(0, 7)); });
+  const bulanOpsi = ['<option value="">Semua Bulan</option>']
+    .concat([...bulanSet].sort().reverse().map(function(b){
+      return '<option value="' + b + '"' + (f.bulan === b ? ' selected' : '') + '>' + b + '</option>';
+    })).join('');
+
+  const rowsHtml = rows.length === 0
+    ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-state-icon">🛒</div><div class="empty-state-text">Belum ada data pembelian.</div></div></td></tr>'
+    : rows.map(function(p) {
+        const isVoid = String(p.STATUS) === 'VOID';
+        const tgl    = String(p.TANGGAL || '').substring(0, 10);
+        return '<tr style="' + (isVoid ? 'opacity:.45;text-decoration:line-through' : '') + '">'
+          + '<td style="font-size:11px;color:#64748b">' + _escHtml(p.ID_PURCHASE || '') + '</td>'
+          + '<td>' + _escHtml(tgl) + '</td>'
+          + '<td style="font-weight:600">' + _escHtml(p.NAMA_BAHAN || p.ID_BAHAN || '') + '</td>'
+          + '<td style="text-align:right">' + (p.QTY_BELI || 0) + ' ' + _escHtml(p.SATUAN_BELI || '') + '</td>'
+          + '<td style="text-align:right">' + _rupiah(p.HARGA_SATUAN) + '</td>'
+          + '<td style="text-align:right;color:#f97316;font-weight:600">' + _rupiah(p.TOTAL_HARGA) + '</td>'
+          + '<td>' + _escHtml(p.NAMA_SUPPLIER || p.ID_SUPPLIER || '-') + '</td>'
+          + '<td style="text-align:right">'
+          + (!isVoid
+            ? '<button class="btn btn-danger" style="padding:3px 8px;font-size:11px" onclick="voidPembelian(\'' + _escHtml(p.ID_PURCHASE || '') + '\')">Void</button>'
+            : '<span style="font-size:11px;color:#ef4444">VOID</span>')
+          + '</td></tr>';
+      }).join('');
+
+  main.innerHTML = '<div class="page-header"><div>'
+    + '<div class="page-title">🛒 Pembelian</div>'
+    + '<div class="page-subtitle">Total ditampilkan: <strong style="color:#f97316">' + _rupiah(totalNilai) + '</strong> · ' + aktif.length + ' transaksi aktif</div></div>'
+    + '<button class="btn btn-primary" onclick="openFormPembelian()">+ Catat Pembelian</button></div>'
+
+    + '<div class="card">'
+    + '<div class="filter-bar">'
+    + '<input type="search" placeholder="Cari bahan, supplier, ID..." value="' + _escHtml(f.q) + '" oninput="State.filter.pembelian.q=this.value;_renderPembelianPage()">'
+    + '<label>Bulan: <select onchange="State.filter.pembelian.bulan=this.value;_renderPembelianPage()">' + bulanOpsi + '</select></label>'
+    + '<span style="margin-left:auto;font-size:12px;color:var(--c-muted)">' + rows.length + ' ditampilkan</span>'
+    + '</div>'
+    + '<div class="table-wrap"><table>'
+    + '<thead><tr><th>ID</th><th>Tanggal</th><th>Bahan</th><th style="text-align:right">Qty</th><th style="text-align:right">Harga/Sat</th><th style="text-align:right">Total</th><th>Supplier</th><th style="text-align:right">Aksi</th></tr></thead>'
+    + '<tbody>' + rowsHtml + '</tbody></table></div></div>'
+    + _pembelianModalHtml()
+    + _confirmModalHtml();
+}
+
+function openFormPembelian() {
+  const bahanOpsi = State.data.bahan
+    .filter(function(b){ return String(b.AKTIF) !== 'FALSE'; })
+    .map(function(b){
+      return '<option value="' + _escHtml(b.ID_BAHAN) + '" data-satuan="' + _escHtml(b.SATUAN_BELI || '') + '">'
+        + _escHtml(b.NAMA_BAHAN) + ' (' + _escHtml(b.SATUAN_BELI || '') + ')</option>';
+    }).join('');
+  const supOpsi = ['<option value="">— Pilih Supplier (opsional) —</option>']
+    .concat(State.data.supplier.filter(function(s){ return String(s.AKTIF) !== 'FALSE'; })
+      .map(function(s){ return '<option value="' + _escHtml(s.ID_SUPPLIER) + '">' + _escHtml(s.NAMA_SUPPLIER) + '</option>'; })).join('');
+
+  document.getElementById('pb-bahan').innerHTML    = bahanOpsi;
+  document.getElementById('pb-supplier').innerHTML = supOpsi;
+  document.getElementById('pb-tanggal').value      = new Date().toISOString().substring(0, 10);
+  document.getElementById('pb-qty').value          = '';
+  document.getElementById('pb-harga').value        = '';
+  document.getElementById('pb-catatan').value      = '';
+  _updatePbSatuan();
+  openModal('modal-pembelian');
+}
+
+function _updatePbSatuan() {
+  const sel   = document.getElementById('pb-bahan');
+  const opt   = sel ? sel.options[sel.selectedIndex] : null;
+  const satEl = document.getElementById('pb-satuan-label');
+  if (satEl) satEl.textContent = opt ? (opt.dataset.satuan || '') : '';
+}
+
+async function savePembelian() {
+  const idBahan    = document.getElementById('pb-bahan').value;
+  const idSupplier = document.getElementById('pb-supplier').value;
+  const tanggal    = document.getElementById('pb-tanggal').value;
+  const qty        = Number(document.getElementById('pb-qty').value);
+  const harga      = Number(document.getElementById('pb-harga').value);
+  const catatan    = document.getElementById('pb-catatan').value.trim();
+
+  if (!idBahan)         { toastErr('Pilih bahan'); return; }
+  if (!tanggal)         { toastErr('Tanggal wajib diisi'); return; }
+  if (!qty || qty <= 0) { toastErr('Qty harus > 0'); return; }
+  if (!harga || harga <= 0) { toastErr('Harga wajib diisi'); return; }
+
+  const bahan = State.data.bahan.find(function(b){ return b.ID_BAHAN === idBahan; });
+  const data  = {
+    ID_BAHAN    : idBahan,
+    ID_SUPPLIER : idSupplier || '',
+    TANGGAL     : tanggal,
+    QTY_BELI    : qty,
+    SATUAN_BELI : bahan ? (bahan.SATUAN_BELI || '') : '',
+    HARGA_SATUAN: harga,
+    CATATAN     : catatan,
+  };
+
+  _setLoading('btn-save-pembelian', true);
+  try {
+    const res = await callServer('apiInvPurchaseCreate', data);
+    if (res.success) {
+      toastOk('Pembelian berhasil dicatat');
+      closeModal('modal-pembelian');
+      await renderPembelian();
+    } else toastErr(res.message);
+  } catch (e) { toastErr('Error: ' + e.message); }
+  finally { _setLoading('btn-save-pembelian', false); }
+}
+
+async function voidPembelian(idPurchase) {
+  showConfirm('Void Pembelian', 'Void ' + idPurchase + '? Stok akan dikembalikan.', async function() {
+    try {
+      const res = await callServer('apiInvPurchaseVoid', idPurchase);
+      if (res.success) { toastOk('Pembelian di-void'); await renderPembelian(); }
+      else toastErr(res.message);
+    } catch (e) { toastErr(e.message); }
+  });
+}
+
+function _pembelianModalHtml() {
+  return '<div id="modal-pembelian" class="modal-overlay hidden"><div class="modal" style="max-width:500px">'
+    + '<div class="modal-header"><span>Catat Pembelian Bahan</span>'
+    + '<button class="btn-close" onclick="closeModal(\'modal-pembelian\')">&times;</button></div>'
+    + '<div class="modal-body">'
+    + '<div class="form-group"><label class="form-label">Bahan *</label>'
+    + '<select id="pb-bahan" class="form-control" onchange="_updatePbSatuan()"></select></div>'
+    + '<div class="form-group"><label class="form-label">Tanggal *</label>'
+    + '<input id="pb-tanggal" class="form-control" type="date"></div>'
+    + '<div class="form-group"><label class="form-label">Qty Beli *</label>'
+    + '<div style="display:flex;gap:8px;align-items:center">'
+    + '<input id="pb-qty" class="form-control" type="number" min="0" step="any" placeholder="0">'
+    + '<span id="pb-satuan-label" style="white-space:nowrap;color:#64748b;font-size:13px;min-width:50px"></span>'
+    + '</div></div>'
+    + '<div class="form-group"><label class="form-label">Harga / Satuan *</label>'
+    + '<input id="pb-harga" class="form-control" type="number" min="0" step="any" placeholder="0"></div>'
+    + '<div class="form-group"><label class="form-label">Supplier</label>'
+    + '<select id="pb-supplier" class="form-control"></select></div>'
+    + '<div class="form-group"><label class="form-label">Catatan</label>'
+    + '<input id="pb-catatan" class="form-control" placeholder="opsional"></div>'
+    + '</div>'
+    + '<div class="modal-footer">'
+    + '<button class="btn btn-ghost" onclick="closeModal(\'modal-pembelian\')">Batal</button>'
+    + '<button class="btn btn-primary" id="btn-save-pembelian" onclick="savePembelian()">Simpan</button>'
+    + '</div></div></div>';
+}
+
+
+// ─── Init ─────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async function() {
+  try {
+    const r = await callServer('apiGetSpreadsheetUrl');
+    if (r.success && r.data) {
+      const link = document.getElementById('link-spreadsheet');
+      if (link) link.href = r.data;
+    }
+  } catch (e) { /* silent */ }
+
+  navigate('dashboard');
+});
+</script>

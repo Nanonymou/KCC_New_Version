@@ -1,0 +1,322 @@
+import { useState, useMemo, useEffect } from "react";
+import { useAuth } from "./AuthContext";
+import {
+  INITIAL_BAHAN,
+  STOK_BAHAN,
+  RESEP,
+  PENJUALAN_HARI_INI,
+  fetchBahan,
+  fetchStok,
+  fetchResep,
+  fetchDashboard,
+  round2, idr,
+} from "./kcc_data_layer";
+
+const S = {
+  card: {
+    background: "#161927",
+    border: "1px solid #1e2840",
+    borderRadius: 14,
+    padding: 20,
+  },
+  label: {
+    fontSize: 11, fontWeight: 700, color: "#475569",
+    textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12,
+  },
+  th: {
+    padding: "9px 12px", textAlign: "left", fontSize: 11,
+    color: "#475569", fontWeight: 600, textTransform: "uppercase",
+    letterSpacing: "0.05em", borderBottom: "1px solid #1e2840",
+  },
+  td: {
+    padding: "11px 12px", fontSize: 13,
+    borderBottom: "1px solid #1e2840", verticalAlign: "middle",
+  },
+};
+
+function Card({ children, style = {} }) {
+  return <div style={{ ...S.card, ...style }}>{children}</div>;
+}
+
+function statusStok(stok, minStok) {
+  const rasio = minStok > 0 ? stok / minStok : 99;
+  if (rasio < 0.5) return { label: "Kritis",  color: "#ef4444" };
+  if (rasio < 1.0) return { label: "Rendah",  color: "#f59e0b" };
+  if (rasio < 1.5) return { label: "Cukup",   color: "#84cc16" };
+  return               { label: "Aman",    color: "#22c55e" };
+}
+
+export default function InventoryManager() {
+  const { token } = useAuth();
+
+  const [filterStatus, setFilterStatus] = useState("Semua");
+  const [searchQ, setSearchQ] = useState("");
+  const [sortBy, setSortBy]   = useState("status"); // status | nama | stok | nilai
+
+  const [bahanList,    setBahanList]    = useState(INITIAL_BAHAN);
+  const [stokBahan,    setStokBahan]    = useState(STOK_BAHAN);
+  const [resepData,    setResepData]    = useState(RESEP);
+  const [penjualan,    setPenjualan]    = useState(PENJUALAN_HARI_INI);
+
+  useEffect(() => {
+    if (!token) return;
+    Promise.all([
+      fetchBahan(token),
+      fetchStok(token),
+      fetchResep(token),
+      fetchDashboard(token),
+    ]).then(([bahanData, stokData, resepRes, dashData]) => {
+      if (bahanData)           setBahanList(bahanData);
+      if (stokData)            setStokBahan(stokData);
+      if (resepRes)            setResepData(resepRes);
+      if (dashData?.penjualan) setPenjualan(dashData.penjualan);
+    });
+  }, [token]);
+
+  const bahanMap = useMemo(() => {
+    const m = {};
+    bahanList.forEach(b => { m[b.ID_BAHAN] = b; });
+    return m;
+  }, [bahanList]);
+
+  const stokMap = useMemo(() => {
+    const m = {};
+    stokBahan.forEach(s => { m[s.ID_BAHAN] = s; });
+    return m;
+  }, [stokBahan]);
+
+  // Hitung kebutuhan harian dari penjualan & resep
+  const kebutuhanHarian = useMemo(() => {
+    const kebutuhan = {};
+    const jualMap = {};
+    penjualan.forEach(j => { jualMap[j.ID_PRODUK] = j.QTY; });
+
+    resepData.forEach(r => {
+      const qty = jualMap[r.ID_PRODUK] || 0;
+      const bahan = bahanMap[r.ID_BAHAN];
+      if (!bahan) return;
+      const konversi = bahan.KONVERSI || 1;
+      const kebutuhanDalamSatuanBeli = (r.JUMLAH * qty) / konversi;
+      kebutuhan[r.ID_BAHAN] = round2((kebutuhan[r.ID_BAHAN] || 0) + kebutuhanDalamSatuanBeli);
+    });
+    return kebutuhan;
+  }, [bahanMap, resepData, penjualan]);
+
+  const inventoryRows = useMemo(() => {
+    return bahanList.map(b => {
+      const stok  = stokMap[b.ID_BAHAN];
+      const s     = stok?.STOK    ?? 0;
+      const min   = stok?.MIN_STOK ?? 0;
+      const sts   = statusStok(s, min);
+      const nilaiStok   = round2(s * b.HARGA_RATA2);
+      const kebHarian   = kebutuhanHarian[b.ID_BAHAN] || 0;
+      const hariTahan   = kebHarian > 0 ? round2(s / kebHarian) : null;
+      const rasio       = min > 0 ? round2(s / min) : 99;
+      return { ...b, STOK: s, MIN_STOK: min, STATUS: sts, NILAI_STOK: nilaiStok, KEB_HARIAN: kebHarian, HARI_TAHAN: hariTahan, RASIO: rasio };
+    });
+  }, [bahanList, stokMap, kebutuhanHarian]);
+
+  const filtered = useMemo(() => {
+    let rows = inventoryRows;
+    if (filterStatus !== "Semua") rows = rows.filter(r => r.STATUS.label === filterStatus);
+    if (searchQ) rows = rows.filter(r => r.NAMA_BAHAN.toLowerCase().includes(searchQ.toLowerCase()));
+    return [...rows].sort((a, b) => {
+      if (sortBy === "nama")   return a.NAMA_BAHAN.localeCompare(b.NAMA_BAHAN);
+      if (sortBy === "stok")   return b.STOK - a.STOK;
+      if (sortBy === "nilai")  return b.NILAI_STOK - a.NILAI_STOK;
+      // default: status (kritis dulu)
+      const order = { Kritis: 0, Rendah: 1, Cukup: 2, Aman: 3 };
+      return (order[a.STATUS.label] ?? 9) - (order[b.STATUS.label] ?? 9);
+    });
+  }, [inventoryRows, filterStatus, searchQ, sortBy]);
+
+  // KPI
+  const kritis  = inventoryRows.filter(r => r.STATUS.label === "Kritis").length;
+  const rendah  = inventoryRows.filter(r => r.STATUS.label === "Rendah").length;
+  const totalNilai = inventoryRows.reduce((s, r) => s + r.NILAI_STOK, 0);
+
+  const statusFilters = ["Semua", "Kritis", "Rendah", "Cukup", "Aman"];
+  const statusColor   = { Kritis: "#ef4444", Rendah: "#f59e0b", Cukup: "#84cc16", Aman: "#22c55e", Semua: "#64748b" };
+
+  return (
+    <div>
+      <style>{`
+        .inv-row:hover { background: rgba(249,115,22,0.04) !important; }
+      `}</style>
+
+      {/* Header */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 20, fontWeight: 800, color: "#f1f5f9", letterSpacing: "-0.02em" }}>
+          📦 Inventory Bahan Baku
+        </div>
+        <div style={{ fontSize: 13, color: "#475569", marginTop: 4 }}>
+          Stok real-time, nilai persediaan & ketahanan bahan
+        </div>
+      </div>
+
+      {/* KPI */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+        {[
+          { label: "Total Bahan", value: bahanList.length, accent: "#f97316", icon: "📦" },
+          { label: "Stok Kritis", value: kritis, accent: "#ef4444", icon: "🔴" },
+          { label: "Stok Rendah", value: rendah, accent: "#f59e0b", icon: "🟡" },
+          { label: "Nilai Stok", value: idr(totalNilai), accent: "#22c55e", icon: "💰" },
+        ].map(k => (
+          <Card key={k.label}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>{k.label}</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: k.accent, letterSpacing: "-0.02em" }}>{k.value}</div>
+              </div>
+              <div style={{ fontSize: 20, opacity: 0.6 }}>{k.icon}</div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Filter & Search Bar */}
+      <Card style={{ marginBottom: 14, padding: "12px 16px" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            type="text"
+            placeholder="🔍 Cari bahan..."
+            value={searchQ}
+            onChange={e => setSearchQ(e.target.value)}
+            style={{
+              background: "#0f1117", border: "1px solid #334155",
+              borderRadius: 8, padding: "7px 12px", color: "#f1f5f9",
+              fontSize: 13, outline: "none", width: 200,
+            }}
+          />
+          <div style={{ display: "flex", gap: 6 }}>
+            {statusFilters.map(s => (
+              <button
+                key={s}
+                onClick={() => setFilterStatus(s)}
+                style={{
+                  padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                  cursor: "pointer", border: "1px solid",
+                  borderColor: filterStatus === s ? statusColor[s] : "#1e2840",
+                  background: filterStatus === s ? statusColor[s] + "22" : "transparent",
+                  color: filterStatus === s ? statusColor[s] : "#64748b",
+                  transition: "all 0.15s",
+                }}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "#64748b" }}>Sort:</span>
+            {[["status","Status"],["nama","Nama"],["stok","Stok"],["nilai","Nilai"]].map(([v, l]) => (
+              <button
+                key={v}
+                onClick={() => setSortBy(v)}
+                style={{
+                  padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 500,
+                  cursor: "pointer", border: "1px solid",
+                  borderColor: sortBy === v ? "#f97316" : "#1e2840",
+                  background: sortBy === v ? "rgba(249,115,22,0.12)" : "transparent",
+                  color: sortBy === v ? "#f97316" : "#64748b",
+                  transition: "all 0.15s",
+                }}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {/* Table */}
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {["Bahan", "Stok", "Min Stok", "Rasio", "Kebutuhan/Hari", "Tahan", "Nilai Stok", "Status"].map(h => (
+                <th key={h} style={S.th}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((b, i) => {
+              const { label, color } = b.STATUS;
+              const rasio = b.RASIO >= 99 ? "—" : b.RASIO.toFixed(2) + "x";
+              return (
+                <tr key={b.ID_BAHAN} className="inv-row" style={{ background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)" }}>
+                  <td style={{ ...S.td, fontWeight: 600, color: "#f1f5f9" }}>
+                    {b.NAMA_BAHAN}
+                    <div style={{ fontSize: 11, color: "#475569", fontWeight: 400 }}>{b.ID_BAHAN}</div>
+                  </td>
+                  <td style={{ ...S.td, fontFamily: "monospace" }}>
+                    <span style={{ fontWeight: 700, color: color }}>{b.STOK}</span>
+                    <span style={{ color: "#475569" }}> {b.SATUAN_BELI}</span>
+                  </td>
+                  <td style={{ ...S.td, color: "#64748b", fontFamily: "monospace" }}>
+                    {b.MIN_STOK} {b.SATUAN_BELI}
+                  </td>
+                  <td style={{ ...S.td, color: color, fontWeight: 700, fontFamily: "monospace" }}>
+                    {rasio}
+                  </td>
+                  <td style={{ ...S.td, fontFamily: "monospace", color: "#94a3b8" }}>
+                    {b.KEB_HARIAN > 0 ? `${b.KEB_HARIAN} ${b.SATUAN_BELI}` : "—"}
+                  </td>
+                  <td style={{ ...S.td }}>
+                    {b.HARI_TAHAN !== null ? (
+                      <span style={{ color: b.HARI_TAHAN < 1 ? "#ef4444" : b.HARI_TAHAN < 2 ? "#f59e0b" : "#22c55e", fontWeight: 700 }}>
+                        {b.HARI_TAHAN.toFixed(1)} hari
+                      </span>
+                    ) : <span style={{ color: "#334155" }}>—</span>}
+                  </td>
+                  <td style={{ ...S.td, fontFamily: "monospace", color: "#e2e8f0" }}>
+                    {idr(b.NILAI_STOK)}
+                  </td>
+                  <td style={S.td}>
+                    <span style={{
+                      display: "inline-block", padding: "3px 10px", borderRadius: 20,
+                      fontSize: 11, fontWeight: 700, color,
+                      background: color + "22", border: `1px solid ${color}44`,
+                    }}>
+                      {label}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {filtered.length === 0 && (
+          <div style={{ padding: 32, textAlign: "center", color: "#334155", fontSize: 13 }}>
+            Tidak ada data yang sesuai filter
+          </div>
+        )}
+      </Card>
+
+      {/* Grafik ketahanan stok */}
+      <Card style={{ marginTop: 14 }}>
+        <div style={S.label}>Ketahanan Stok per Bahan (hari)</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {inventoryRows
+            .filter(b => b.HARI_TAHAN !== null)
+            .sort((a, b) => (a.HARI_TAHAN ?? 0) - (b.HARI_TAHAN ?? 0))
+            .map(b => {
+              const maxHari = 7;
+              const width = Math.min(((b.HARI_TAHAN ?? 0) / maxHari) * 100, 100);
+              const color = (b.HARI_TAHAN ?? 0) < 1 ? "#ef4444" : (b.HARI_TAHAN ?? 0) < 2 ? "#f59e0b" : "#22c55e";
+              return (
+                <div key={b.ID_BAHAN}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                    <span style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 500 }}>{b.NAMA_BAHAN}</span>
+                    <span style={{ fontSize: 12, color, fontWeight: 700 }}>{b.HARI_TAHAN?.toFixed(1)} hari</span>
+                  </div>
+                  <div style={{ height: 5, background: "#1e2840", borderRadius: 99, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${width}%`, background: color, borderRadius: 99, transition: "width 0.5s ease" }} />
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      </Card>
+    </div>
+  );
+}
