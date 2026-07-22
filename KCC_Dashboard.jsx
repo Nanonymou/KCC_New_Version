@@ -8,8 +8,9 @@ import {
   fetchStok,
   fetchDashboard,
   recalcSemua,
-  round2, idr, pct, marginColor,
+  round2, idr, pct,
 } from "./kcc_data_layer";
+import { T, marginTone as marginColor } from "./theme";
 
 // DASHBOARD SERVICE — hanya membaca dari Service Layer
 // ─────────────────────────────────────────────────────────────
@@ -90,10 +91,11 @@ function getDashboardData(bahanList, stokBahan, penjualanHariIni) {
 function Card({ children, style = {} }) {
   return (
     <div style={{
-      background: "#161927",
-      border: "1px solid #1e2840",
-      borderRadius: 14,
+      background: T.surface,
+      border: `1px solid ${T.border}`,
+      borderRadius: T.radiusLg,
       padding: 20,
+      boxShadow: T.shadow,
       ...style,
     }}>
       {children}
@@ -103,23 +105,28 @@ function Card({ children, style = {} }) {
 
 function SectionTitle({ children }) {
   return (
-    <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>
+    <div style={{ fontSize: 11, fontWeight: 700, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>
       {children}
     </div>
   );
 }
 
-function KPICard({ label, value, sub, accent = "#f97316", icon }) {
+function KPICard({ label, value, sub, accent = T.primary, icon }) {
   return (
-    <Card>
+    <Card style={{ position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, width: 3, height: "100%", background: accent, opacity: 0.9 }} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>{label}</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: accent, letterSpacing: "-0.03em", lineHeight: 1 }}>{value}</div>
-          {sub && <div style={{ fontSize: 12, color: "#475569", marginTop: 5 }}>{sub}</div>}
+          <div style={{ fontSize: 11, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>{label}</div>
+          <div style={{ fontFamily: T.fontDisplay, fontSize: 27, fontWeight: 600, color: accent, letterSpacing: "-0.02em", lineHeight: 1 }}>{value}</div>
+          {sub && <div style={{ fontSize: 12, color: T.textFaint, marginTop: 7 }}>{sub}</div>}
         </div>
         {icon && (
-          <div style={{ fontSize: 22, opacity: 0.6, marginTop: 2 }}>{icon}</div>
+          <div style={{
+            fontSize: 18, width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: accent + "1e", border: `1px solid ${accent}33`,
+          }}>{icon}</div>
         )}
       </div>
     </Card>
@@ -130,11 +137,11 @@ function BarRow({ label, value, max, color, sub }) {
   const width = max > 0 ? Math.min((value / max) * 100, 100) : 0;
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{label}</span>
-        <span style={{ fontSize: 12, color: "#94a3b8", fontFamily: "monospace" }}>{sub}</span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{label}</span>
+        <span style={{ fontSize: 12, color: T.textMuted, fontVariantNumeric: "tabular-nums" }}>{sub}</span>
       </div>
-      <div style={{ height: 5, background: "#1e2840", borderRadius: 99, overflow: "hidden" }}>
+      <div style={{ height: 6, background: T.surfaceInput, borderRadius: 99, overflow: "hidden" }}>
         <div style={{ height: "100%", width: `${width}%`, background: color, borderRadius: 99, transition: "width 0.6s ease" }} />
       </div>
     </div>
@@ -145,7 +152,7 @@ function Badge({ children, color }) {
   return (
     <span style={{
       display: "inline-block",
-      padding: "2px 9px",
+      padding: "3px 10px",
       borderRadius: 20,
       fontSize: 11,
       fontWeight: 700,
@@ -158,24 +165,24 @@ function Badge({ children, color }) {
   );
 }
 
-function AlertRow({ icon, label, value, sub, accent = "#ef4444" }) {
+function AlertRow({ icon, label, value, sub, accent = T.danger }) {
   return (
     <div style={{
       display: "flex",
       alignItems: "center",
       gap: 12,
-      padding: "10px 12px",
-      borderRadius: 8,
-      background: accent + "12",
-      border: `1px solid ${accent}28`,
+      padding: "11px 13px",
+      borderRadius: T.radiusSm,
+      background: accent + "14",
+      border: `1px solid ${accent}30`,
       marginBottom: 8,
     }}>
       <span style={{ fontSize: 18 }}>{icon}</span>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "#f1f5f9" }}>{label}</div>
-        {sub && <div style={{ fontSize: 11, color: "#475569", marginTop: 1 }}>{sub}</div>}
+        <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{label}</div>
+        {sub && <div style={{ fontSize: 11.5, color: T.textFaint, marginTop: 2 }}>{sub}</div>}
       </div>
-      <div style={{ fontSize: 12, fontWeight: 700, color: accent, fontFamily: "monospace", textAlign: "right" }}>{value}</div>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: accent, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{value}</div>
     </div>
   );
 }
@@ -238,6 +245,22 @@ export default function KCCDashboard() {
         }
       `}</style>
 
+      {/* ── Hero header ── */}
+        <div style={{ marginBottom: 22, display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: T.primary, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>
+              Ringkasan Operasional
+            </div>
+            <h1 style={{ fontFamily: T.fontDisplay, fontSize: 28, fontWeight: 600, color: T.text, letterSpacing: "-0.01em", lineHeight: 1.1 }}>
+              Dashboard Dapur
+            </h1>
+          </div>
+          <div style={{ fontSize: 12.5, color: T.textFaint, display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 99, background: fetchDone ? T.success : T.warning, display: "inline-block", animation: fetchDone ? "none" : "pulse 1.2s infinite" }} />
+            {fetchDone ? "Data langsung dari database" : "Memuat data…"}
+          </div>
+        </div>
+
       {/* ── KPI Row ── */}
         <div className="dash-grid kpi-grid" style={{ marginBottom: 16 }}>
           <div className="card-ani" style={{ animationDelay: "0ms" }}>
@@ -245,7 +268,7 @@ export default function KCCDashboard() {
               label="Omzet Hari Ini"
               value={idr(omzet)}
               sub={`${penjualan.reduce((s, j) => s + j.QTY, 0)} porsi terjual`}
-              accent="#f97316"
+              accent={T.primary}
               icon="💰"
             />
           </div>
@@ -254,7 +277,7 @@ export default function KCCDashboard() {
               label="Food Cost"
               value={pct(foodCostPct)}
               sub={idr(totalFoodCost) + " total bahan"}
-              accent={foodCostPct > 40 ? "#ef4444" : foodCostPct > 30 ? "#f59e0b" : "#22c55e"}
+              accent={foodCostPct > 40 ? T.danger : foodCostPct > 30 ? T.warning : T.success}
               icon="🧾"
             />
           </div>
@@ -272,7 +295,7 @@ export default function KCCDashboard() {
               label="Profit Bersih"
               value={idr(profit)}
               sub="setelah dikurangi HPP"
-              accent="#22c55e"
+              accent={T.success}
               icon="✅"
             />
           </div>
@@ -281,7 +304,7 @@ export default function KCCDashboard() {
               label="Alert"
               value={`${hargaNaik.length + stokMinimum.length}`}
               sub={`${hargaNaik.length} harga naik · ${stokMinimum.length} stok kritis`}
-              accent={hargaNaik.length + stokMinimum.length > 0 ? "#ef4444" : "#22c55e"}
+              accent={hargaNaik.length + stokMinimum.length > 0 ? T.danger : T.success}
               icon="⚠️"
             />
           </div>
@@ -299,7 +322,7 @@ export default function KCCDashboard() {
                 label={p.NAMA_PRODUK}
                 value={p.QTY}
                 max={maxQty}
-                color={i === 0 ? "#f97316" : i === 1 ? "#fb923c" : "#94a3b8"}
+                color={i === 0 ? T.primary : i === 1 ? T.primaryHover : T.textFaint}
                 sub={`${p.QTY} pcs · ${idr(p.OMZET)}`}
               />
             ))}
@@ -312,12 +335,12 @@ export default function KCCDashboard() {
               <div key={p.ID_PRODUK} style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{p.NAMA_PRODUK}</div>
-                    <div style={{ fontSize: 11, color: "#475569" }}>{p.KATEGORI} · HPP {idr(p.HPP_PER_PCS)}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{p.NAMA_PRODUK}</div>
+                    <div style={{ fontSize: 11, color: T.textFaint }}>{p.KATEGORI} · HPP {idr(p.HPP_PER_PCS)}</div>
                   </div>
                   <Badge color={marginColor(p.MARGIN_PCT)}>{pct(p.MARGIN_PCT)}</Badge>
                 </div>
-                <div style={{ height: 4, background: "#1e2840", borderRadius: 99, overflow: "hidden" }}>
+                <div style={{ height: 5, background: T.surfaceInput, borderRadius: 99, overflow: "hidden" }}>
                   <div style={{ height: "100%", width: `${Math.min(p.MARGIN_PCT, 100)}%`, background: marginColor(p.MARGIN_PCT), borderRadius: 99, transition: "width 0.6s ease" }} />
                 </div>
               </div>
@@ -333,7 +356,7 @@ export default function KCCDashboard() {
                 label={p.NAMA_PRODUK}
                 value={p.TOTAL_PROFIT}
                 max={maxProfit}
-                color={i === 0 ? "#22c55e" : i === 1 ? "#86efac" : "#94a3b8"}
+                color={i === 0 ? T.success : i === 1 ? "#a9c46a" : T.textFaint}
                 sub={`${p.QTY} pcs · ${idr(p.TOTAL_PROFIT)}`}
               />
             ))}
@@ -347,7 +370,7 @@ export default function KCCDashboard() {
           <Card>
             <SectionTitle>📦 Harga Bahan Naik</SectionTitle>
             {hargaNaik.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "24px 0", color: "#334155", fontSize: 13 }}>
+              <div style={{ textAlign: "center", padding: "24px 0", color: T.textFaint, fontSize: 13 }}>
                 ✓ Semua harga bahan masih normal
               </div>
             ) : (
@@ -358,7 +381,7 @@ export default function KCCDashboard() {
                   label={b.NAMA_BAHAN}
                   sub={`${idr(b.HARGA_AWAL)} → ${idr(b.HARGA_RATA2)} / ${b.SATUAN_BELI}`}
                   value={`+${pct(b.PCT_NAIK)}`}
-                  accent="#f59e0b"
+                  accent={T.warning}
                 />
               ))
             )}
@@ -368,7 +391,7 @@ export default function KCCDashboard() {
           <Card>
             <SectionTitle>⚠️ Stok Minimum</SectionTitle>
             {stokMinimum.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "24px 0", color: "#334155", fontSize: 13 }}>
+              <div style={{ textAlign: "center", padding: "24px 0", color: T.textFaint, fontSize: 13 }}>
                 ✓ Semua stok bahan mencukupi
               </div>
             ) : (
@@ -379,7 +402,7 @@ export default function KCCDashboard() {
                   label={b.NAMA_BAHAN}
                   sub={`Stok: ${b.STOK} ${b.SATUAN_BELI} · Min: ${b.MIN_STOK} ${b.SATUAN_BELI}`}
                   value={`${Math.round(b.RASIO * 100)}%`}
-                  accent={b.RASIO < 0.5 ? "#ef4444" : "#f59e0b"}
+                  accent={b.RASIO < 0.5 ? T.danger : T.warning}
                 />
               ))
             )}
@@ -387,8 +410,8 @@ export default function KCCDashboard() {
         </div>
 
         {/* Footer note */}
-        <div style={{ marginTop: 20, textAlign: "center", fontSize: 11, color: "#1e2840" }}>
-          Dashboard · KCC
+        <div style={{ marginTop: 22, textAlign: "center", fontSize: 11, color: T.textFaint, letterSpacing: "0.04em" }}>
+          KCC · Kitchen Cost Control
         </div>
     </div>
   );

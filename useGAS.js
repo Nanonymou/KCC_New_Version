@@ -1,93 +1,86 @@
-/**
- * useGAS.js
- * Promise-based wrapper for google.script.run.
- *
- * Usage:
- *   import { gasRun, gasCall } from './useGAS';
- *
- *   // Low-level: call any GAS function by name
- *   const result = await gasRun('apiLogin', { outletCode, username, password });
- *
- *   // Hook variant (used inside components)
- *   const { call, loading, error } = useGAS();
- *   await call('apiGetDashboardSummary', { token });
- */
-
-// ─── Core Promise wrapper ──────────────────────────────────────────────────
-
-/**
- * Calls a Google Apps Script server-side function and returns a Promise.
- *
- * @param {string} fnName   - Name of the GAS function exposed via Code.gs
- * @param {*}      params   - Single argument passed to the function (object, string, etc.)
- * @returns {Promise<*>}    - Resolves with success value, rejects with error object
- */
-export function gasRun(fnName, params) {
-  return new Promise((resolve, reject) => {
-    if (typeof google === 'undefined' || !google.script || !google.script.run) {
-      // Dev environment — GAS not available
-      reject(new Error('[useGAS] google.script.run is not available (dev environment).'));
-      return;
-    }
-
-    const runner = google.script.run
-      .withSuccessHandler((result) => {
-        // GAS convention: functions return { success, data, message, code }
-        if (result && result.success === false) {
-          const err = new Error(result.message || 'GAS returned success:false');
-          err.code = result.code || 'GAS_ERROR';
-          err.gasResult = result;
-          reject(err);
-        } else {
-          resolve(result);
-        }
-      })
-      .withFailureHandler((err) => {
-        // GAS runtime error (unhandled exception server-side)
-        const error = new Error(err.message || 'Unexpected server error');
-        error.code = 'SERVER_ERROR';
-        error.gasError = err;
-        reject(error);
-      });
-
-    if (typeof runner[fnName] !== 'function') {
-      reject(new Error(`[useGAS] Function "${fnName}" is not defined in google.script.run`));
-      return;
-    }
-
-    // Call with single param (GAS functions accept one argument from frontend)
-    if (params !== undefined) {
-      runner[fnName](params);
-    } else {
-      runner[fnName]();
-    }
-  });
-}
-
-// ─── React Hook ───────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// useGAS.js
+// HTTP client for the KCC backend (Vercel Serverless Function at /api/rpc).
+//
+// Historically this wrapped Google Apps Script's google.script.run. The app
+// has since migrated to a Vercel + Postgres backend, but the public API of
+// this module is unchanged (gasRun / useGAS) so no calling code needed edits:
+//
+//   import { gasRun, useGAS } from './useGAS';
+//   const res = await gasRun('apiLogin', { outletCode, username, password });
+//
+// The backend keeps the same response envelope:
+//   { success, data | token | session, message, code }
+// and gasRun rejects whenever success === false (or on transport errors).
+// ═══════════════════════════════════════════════════════════════════════════
 
 import { useState, useCallback } from 'react';
 
+// Endpoint is same-origin on Vercel. Override with VITE_API_BASE if the API
+// is hosted elsewhere (e.g. a separate Vercel project).
+const API_BASE = (import.meta?.env?.VITE_API_BASE || '').replace(/\/$/, '');
+const RPC_URL = `${API_BASE}/api/rpc`;
+
+// ─── Core Promise wrapper ───────────────────────────────────────────────────
+
 /**
- * React hook that wraps gasRun with loading/error state.
- *
+ * Calls a backend action and returns a Promise.
+ * @param {string} fnName - action name exposed by api/_lib/handlers.js
+ * @param {*}      params - single params object
+ * @returns {Promise<*>}  - resolves with the response envelope, rejects on failure
+ */
+export function gasRun(fnName, params) {
+  return fetch(RPC_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: fnName, params: params ?? {} }),
+  })
+    .then(async (resp) => {
+      let result;
+      try {
+        result = await resp.json();
+      } catch {
+        const err = new Error(`Respons server tidak valid (HTTP ${resp.status}).`);
+        err.code = 'BAD_RESPONSE';
+        throw err;
+      }
+
+      // Backend convention: { success: false, ... } means a handled failure.
+      if (result && result.success === false) {
+        const err = new Error(result.message || 'Permintaan gagal.');
+        err.code = result.code || 'GAS_ERROR';
+        err.gasResult = result;
+        throw err;
+      }
+      return result;
+    })
+    .catch((err) => {
+      // Network / transport error (server unreachable, offline, CORS, …)
+      if (!err.code) {
+        const e = new Error(err.message || 'Tidak dapat terhubung ke server.');
+        e.code = 'NETWORK_ERROR';
+        e.original = err;
+        throw e;
+      }
+      throw err;
+    });
+}
+
+// ─── React Hook ─────────────────────────────────────────────────────────────
+
+/**
+ * React hook wrapping gasRun with loading/error state.
  * @returns {{ call, loading, error, clearError }}
  */
 export function useGAS() {
   const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
+  const [error, setError] = useState(null);
 
-  /**
-   * @param {string} fnName   - GAS function name
-   * @param {*}      params   - Params object (token should be included by caller)
-   * @returns {Promise<*>}
-   */
   const call = useCallback(async (fnName, params) => {
     setLoading(true);
     setError(null);
     try {
-      const result = await gasRun(fnName, params);
-      return result;
+      return await gasRun(fnName, params);
     } catch (err) {
       setError(err.message || 'Terjadi kesalahan.');
       throw err;

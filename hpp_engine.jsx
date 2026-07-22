@@ -160,7 +160,7 @@ export default function HPPEngine() {
     }),
     btn: (variant = "primary") => ({
       padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-      cursor: "pointer", border: "none", transition: "all 0.15s",
+      cursor: "pointer", transition: "all 0.15s",
       background: variant === "primary" ? "#f97316"
                 : variant === "success" ? "#22c55e"
                 : variant === "ghost"   ? "transparent"
