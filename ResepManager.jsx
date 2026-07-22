@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useAuth } from "./AuthContext";
 import {
   INITIAL_BAHAN,
@@ -7,9 +7,14 @@ import {
   fetchBahan,
   fetchProduk,
   fetchResep,
+  addResepItem,
+  updateResepItem,
+  deleteResepItem,
+  createProduk,
   recalcSemua,
   round2, idr, pct, marginColor,
 } from "./kcc_data_layer";
+import { Modal, Field, TextInput, Select, Button, FormError, Toast } from "./FormKit";
 
 // ─── Shared Styles ────────────────────────────────────────────
 const S = {
@@ -45,27 +50,49 @@ function Card({ children, style = {} }) {
 }
 
 export default function ResepManager() {
-  const { token } = useAuth();
+  const { token, role, isDemo } = useAuth();
+  const canWrite = !isDemo && (role === "ADMIN" || role === "SUPER_ADMIN");
 
   const [bahanList,  setBahanList]  = useState(INITIAL_BAHAN);
   const [produkList, setProdukList] = useState(PRODUK);
   const [resepData,  setResepData]  = useState(RESEP);
   const [searchQ,    setSearchQ]    = useState("");
 
-  useEffect(() => {
+  const [showAddProduk, setShowAddProduk] = useState(false);
+  const [showAddItem, setShowAddItem]     = useState(false);
+  const [editItem, setEditItem]           = useState(null);
+  const [toast, setToast]                 = useState("");
+  const flashToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
+
+  const reload = useCallback(async () => {
     if (!token) return;
-    Promise.all([
-      fetchBahan(token),
-      fetchProduk(token),
-      fetchResep(token),
-    ]).then(([bahanData, produkData, resepRes]) => {
-      if (bahanData)  setBahanList(bahanData);
-      if (produkData) setProdukList(produkData);
-      if (resepRes)   setResepData(resepRes);
-    });
+    const [bahanData, produkData, resepRes] = await Promise.all([
+      fetchBahan(token), fetchProduk(token), fetchResep(token),
+    ]);
+    if (bahanData)  setBahanList(bahanData);
+    if (produkData) setProdukList(produkData);
+    if (resepRes)   setResepData(resepRes);
   }, [token]);
 
+  useEffect(() => { reload(); }, [reload]);
+
   const [selectedProduk, setSelectedProduk] = useState(null);
+  const [deletingKey, setDeletingKey] = useState(null);
+
+  async function handleDeleteItem(idProduk, idBahan, nama) {
+    if (deletingKey === idBahan) return; // already in flight
+    if (!window.confirm(`Hapus "${nama}" dari resep?`)) return;
+    setDeletingKey(idBahan);
+    try {
+      await deleteResepItem(token, { ID_PRODUK: idProduk, ID_BAHAN: idBahan });
+      await reload();
+      flashToast(`"${nama}" dihapus dari resep`);
+    } catch (e) {
+      window.alert("Gagal menghapus: " + (e.message || "kesalahan server"));
+    } finally {
+      setDeletingKey(null);
+    }
+  }
 
   // Set default selection once produkList is available
   const activeProdukId = selectedProduk ?? produkList[0]?.ID_PRODUK ?? null;
@@ -133,6 +160,11 @@ export default function ResepManager() {
                 fontSize: 13, outline: "none",
               }}
             />
+            {canWrite && (
+              <Button onClick={() => setShowAddProduk(true)} style={{ width: "100%", justifyContent: "center", marginTop: 10 }}>
+                ＋ Produk Baru
+              </Button>
+            )}
           </div>
           {filteredProduk.map(p => {
             const hpp = hppMap[p.ID_PRODUK];
@@ -198,15 +230,20 @@ export default function ResepManager() {
                   {selected?.NAMA_PRODUK} — yield {selected?.YIELD_PCS} pcs/batch
                 </div>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 11, color: "#8a857b" }}>Total Biaya Batch</div>
-                <div style={{ fontSize: 18, fontWeight: 800, color: "#c96442" }}>{idr(totalBiayaResep)}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 11, color: "#8a857b" }}>Total Biaya Batch</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: "#c96442" }}>{idr(totalBiayaResep)}</div>
+                </div>
+                {canWrite && selected && (
+                  <Button onClick={() => setShowAddItem(true)}>＋ Tambah Bahan</Button>
+                )}
               </div>
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Bahan", "Jumlah", "Satuan", "Harga/kg", "Biaya"].map(h => (
+                  {["Bahan", "Jumlah", "Satuan", "Harga/kg", "Biaya", ...(canWrite ? ["Aksi"] : [])].map(h => (
                     <th key={h} style={S.th}>{h}</th>
                   ))}
                 </tr>
@@ -229,6 +266,23 @@ export default function ResepManager() {
                         </div>
                         <div style={{ fontSize: 10, color: "#78746b", marginTop: 1 }}>{pctBiaya}%</div>
                       </td>
+                      {canWrite && (
+                        <td style={S.td}>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button
+                              onClick={() => setEditItem({ ID_BAHAN: d.ID_BAHAN, NAMA_BAHAN: d.NAMA_BAHAN, JUMLAH: d.JUMLAH, SATUAN_PAKAI: d.SATUAN_PAKAI })}
+                              title="Ubah jumlah"
+                              style={{ padding: "4px 9px", fontSize: 11.5, fontWeight: 600, color: "#c96442", background: "rgba(201,100,66,0.10)", border: "1px solid rgba(201,100,66,0.32)", borderRadius: 6, cursor: "pointer" }}
+                            >Ubah</button>
+                            <button
+                              onClick={() => handleDeleteItem(activeProdukId, d.ID_BAHAN, d.NAMA_BAHAN)}
+                              disabled={deletingKey === d.ID_BAHAN}
+                              title="Hapus dari resep"
+                              style={{ padding: "4px 9px", fontSize: 11.5, fontWeight: 600, color: "#d1685c", background: "rgba(209,104,92,0.10)", border: "1px solid rgba(209,104,92,0.32)", borderRadius: 6, cursor: deletingKey === d.ID_BAHAN ? "wait" : "pointer", opacity: deletingKey === d.ID_BAHAN ? 0.6 : 1 }}
+                            >{deletingKey === d.ID_BAHAN ? "…" : "Hapus"}</button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -237,6 +291,7 @@ export default function ResepManager() {
                 <tr>
                   <td colSpan={4} style={{ ...S.td, fontWeight: 700, color: "#a9a49a" }}>Total Biaya per Batch</td>
                   <td style={{ ...S.td, fontWeight: 800, color: "#c96442", fontFamily: "monospace" }}>{idr(totalBiayaResep)}</td>
+                  {canWrite && <td style={S.td} />}
                 </tr>
               </tfoot>
             </table>
@@ -269,6 +324,150 @@ export default function ResepManager() {
           </Card>
         </div>
       </div>
+
+      {showAddProduk && (
+        <AddProdukModal
+          token={token}
+          onClose={() => setShowAddProduk(false)}
+          onDone={async (id, nama) => { setShowAddProduk(false); await reload(); if (id) setSelectedProduk(id); flashToast(`Produk "${nama}" dibuat`); }}
+        />
+      )}
+      {showAddItem && selected && (
+        <ResepItemModal
+          token={token}
+          mode="add"
+          idProduk={activeProdukId}
+          produkNama={selected.NAMA_PRODUK}
+          bahanList={bahanList}
+          existingIds={resepProduk.map(r => r.ID_BAHAN)}
+          onClose={() => setShowAddItem(false)}
+          onDone={async (nama) => { setShowAddItem(false); await reload(); flashToast(`"${nama}" ditambahkan ke resep`); }}
+        />
+      )}
+      {editItem && (
+        <ResepItemModal
+          token={token}
+          mode="edit"
+          idProduk={activeProdukId}
+          produkNama={selected?.NAMA_PRODUK}
+          item={editItem}
+          onClose={() => setEditItem(null)}
+          onDone={async (nama) => { setEditItem(null); await reload(); flashToast(`Jumlah "${nama}" diperbarui`); }}
+        />
+      )}
+      <Toast show={!!toast}>{toast}</Toast>
     </div>
+  );
+}
+
+// ─── Add Produk modal ────────────────────────────────────────────────────────
+function AddProdukModal({ token, onClose, onDone }) {
+  const [nama, setNama]       = useState("");
+  const [kategori, setKategori] = useState("Main Course");
+  const [harga, setHarga]     = useState("");
+  const [yieldPcs, setYieldPcs] = useState("1");
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState(null);
+
+  async function submit() {
+    setError(null);
+    if (!nama.trim())            return setError("Nama produk wajib diisi.");
+    if (!(Number(harga) > 0))    return setError("Harga jual harus lebih dari 0.");
+    if (!(Number(yieldPcs) > 0)) return setError("Yield harus lebih dari 0.");
+    setSaving(true);
+    try {
+      const res = await createProduk(token, {
+        NAMA_PRODUK: nama.trim(), KATEGORI: kategori.trim() || "Lainnya",
+        HARGA_JUAL: Number(harga), YIELD_PCS: Number(yieldPcs),
+      });
+      onDone(res?.data?.ID_PRODUK, nama.trim());
+    } catch (e) {
+      setError(e.message || "Gagal membuat produk.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Produk Baru"
+      subtitle="ID produk dibuat otomatis · resep dapat diisi setelahnya"
+      onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Batal</Button>
+        <Button onClick={submit} loading={saving}>Simpan Produk</Button>
+      </>}
+    >
+      <FormError>{error}</FormError>
+      <Field label="Nama Produk">
+        <TextInput value={nama} onChange={e => setNama(e.target.value)} placeholder="Contoh: Sate Ayam" autoFocus />
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label="Kategori"><TextInput value={kategori} onChange={e => setKategori(e.target.value)} placeholder="Main Course" /></Field>
+        <Field label="Yield (pcs / batch)"><TextInput type="number" min="1" step="any" value={yieldPcs} onChange={e => setYieldPcs(e.target.value)} /></Field>
+      </div>
+      <Field label="Harga Jual / pcs">
+        <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} placeholder="0" />
+      </Field>
+    </Modal>
+  );
+}
+
+// ─── Add / Edit Resep item modal ─────────────────────────────────────────────
+function ResepItemModal({ token, mode, idProduk, produkNama, bahanList = [], existingIds = [], item, onClose, onDone }) {
+  const isEdit = mode === "edit";
+  const available = bahanList.filter(b => !existingIds.includes(b.ID_BAHAN));
+  const [idBahan, setIdBahan] = useState(isEdit ? item.ID_BAHAN : (available[0]?.ID_BAHAN || ""));
+  const [jumlah, setJumlah]   = useState(isEdit ? String(item.JUMLAH) : "");
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState(null);
+
+  const satuan = isEdit ? item.SATUAN_PAKAI : (bahanList.find(b => b.ID_BAHAN === idBahan)?.SATUAN_PAKAI || "");
+  const nama   = isEdit ? item.NAMA_BAHAN : (bahanList.find(b => b.ID_BAHAN === idBahan)?.NAMA_BAHAN || "");
+
+  async function submit() {
+    setError(null);
+    if (!idBahan)            return setError("Pilih bahan.");
+    if (!(Number(jumlah) > 0)) return setError("Jumlah harus lebih dari 0.");
+    setSaving(true);
+    try {
+      const payload = { ID_PRODUK: idProduk, ID_BAHAN: idBahan, JUMLAH: Number(jumlah) };
+      if (isEdit) await updateResepItem(token, payload);
+      else        await addResepItem(token, payload);
+      onDone(nama);
+    } catch (e) {
+      setError(e.message || "Gagal menyimpan item resep.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={isEdit ? `Ubah Jumlah — ${item.NAMA_BAHAN}` : "Tambah Bahan ke Resep"}
+      subtitle={produkNama}
+      width={420}
+      onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Batal</Button>
+        <Button onClick={submit} loading={saving}>{isEdit ? "Simpan" : "Tambahkan"}</Button>
+      </>}
+    >
+      <FormError>{error}</FormError>
+      {!isEdit && (
+        available.length === 0 ? (
+          <div style={{ fontSize: 13, color: "#d99a4e" }}>Semua bahan sudah ada di resep ini.</div>
+        ) : (
+          <Field label="Bahan">
+            <Select value={idBahan} onChange={e => setIdBahan(e.target.value)}>
+              {available.map(b => <option key={b.ID_BAHAN} value={b.ID_BAHAN}>{b.NAMA_BAHAN}</option>)}
+            </Select>
+          </Field>
+        )
+      )}
+      <Field label={`Jumlah (${satuan || "satuan pakai"})`} hint="Jumlah pemakaian per batch resep">
+        <TextInput type="number" min="0" step="any" value={jumlah} onChange={e => setJumlah(e.target.value)} placeholder="0" autoFocus disabled={!isEdit && available.length === 0} />
+      </Field>
+    </Modal>
   );
 }

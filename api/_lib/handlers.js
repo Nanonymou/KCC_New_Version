@@ -112,10 +112,36 @@ async function apiGetDashboardSummary(p) {
 async function apiBahanCreate(p) {
   const s = await requireSession(p);
   const b = p.data || p;
-  await sql`INSERT INTO bahan (id, outlet_id, nama, satuan_beli, satuan_pakai, konversi, harga_rata2, harga_sebelumnya, active)
-            VALUES (${b.ID_BAHAN}, ${s.outletId}, ${b.NAMA_BAHAN}, ${b.SATUAN_BELI}, ${b.SATUAN_PAKAI},
-                    ${num(b.KONVERSI) || 1}, ${num(b.HARGA_RATA2)}, ${num(b.HARGA_SEBELUMNYA ?? b.HARGA_RATA2)}, TRUE);`;
-  return ok({ ID_BAHAN: b.ID_BAHAN });
+  const provided = b.ID_BAHAN && String(b.ID_BAHAN).trim();
+  // Optional opening stock is written in the SAME transaction as the bahan, so
+  // a retry after a partial failure can never leave a bahan without its stock
+  // (or create a duplicate). The id is retried on a unique collision.
+  const setStock = b.STOK != null || b.MIN_STOK != null;
+  const client = await db.connect();
+  try {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const id = provided || await genId(s.outletId, 'bahan', 'B');
+      try {
+        await client.sql`BEGIN`;
+        await client.sql`INSERT INTO bahan (id, outlet_id, nama, satuan_beli, satuan_pakai, konversi, harga_rata2, harga_sebelumnya, active)
+                  VALUES (${id}, ${s.outletId}, ${b.NAMA_BAHAN}, ${b.SATUAN_BELI}, ${b.SATUAN_PAKAI},
+                          ${num(b.KONVERSI) || 1}, ${num(b.HARGA_RATA2)}, ${num(b.HARGA_SEBELUMNYA ?? b.HARGA_RATA2)}, TRUE);`;
+        if (setStock) {
+          await client.sql`INSERT INTO stok (outlet_id, id_bahan, stok, min_stok)
+                    VALUES (${s.outletId}, ${id}, ${num(b.STOK)}, ${num(b.MIN_STOK)})
+                    ON CONFLICT (outlet_id, id_bahan) DO UPDATE SET stok=${num(b.STOK)}, min_stok=${num(b.MIN_STOK)};`;
+        }
+        await client.sql`COMMIT`;
+        return ok({ ID_BAHAN: id });
+      } catch (e) {
+        try { await client.sql`ROLLBACK`; } catch { /* ignore */ }
+        if (e?.code === '23505' && !provided && attempt < 5) continue; // id race — regen & retry
+        throw e;
+      }
+    }
+  } finally {
+    client.release();
+  }
 }
 async function apiBahanUpdate(p) {
   const s = await requireSession(p);
@@ -141,9 +167,10 @@ async function apiBahanReactivate(p) {
 async function apiProdukCreate(p) {
   const s = await requireSession(p);
   const b = p.data || p;
-  await sql`INSERT INTO produk (id, outlet_id, nama, kategori, harga_jual, yield_pcs, active)
-            VALUES (${b.ID_PRODUK}, ${s.outletId}, ${b.NAMA_PRODUK}, ${b.KATEGORI}, ${num(b.HARGA_JUAL)}, ${num(b.YIELD_PCS) || 1}, TRUE);`;
-  return ok({ ID_PRODUK: b.ID_PRODUK });
+  const id = await insertWithGenId(s.outletId, 'produk', 'P', b.ID_PRODUK, (id) =>
+    sql`INSERT INTO produk (id, outlet_id, nama, kategori, harga_jual, yield_pcs, active)
+        VALUES (${id}, ${s.outletId}, ${b.NAMA_PRODUK}, ${b.KATEGORI}, ${num(b.HARGA_JUAL)}, ${num(b.YIELD_PCS) || 1}, TRUE);`);
+  return ok({ ID_PRODUK: id });
 }
 async function apiProdukUpdate(p) {
   const s = await requireSession(p);
@@ -166,10 +193,11 @@ async function apiProdukReactivate(p) {
 async function apiSupplierCreate(p) {
   const s = await requireSession(p);
   const b = p.data || p;
-  await sql`INSERT INTO supplier (id, outlet_id, nama, id_bahan, harga, satuan, lead_time, rating, telp, active)
-            VALUES (${b.ID_SUPPLIER}, ${s.outletId}, ${b.NAMA}, ${b.ID_BAHAN}, ${num(b.HARGA)}, ${b.SATUAN},
-                    ${num(b.LEAD_TIME)}, ${num(b.RATING)}, ${b.TELP}, TRUE);`;
-  return ok({ ID_SUPPLIER: b.ID_SUPPLIER });
+  const id = await insertWithGenId(s.outletId, 'supplier', 'S', b.ID_SUPPLIER, (id) =>
+    sql`INSERT INTO supplier (id, outlet_id, nama, id_bahan, harga, satuan, lead_time, rating, telp, active)
+        VALUES (${id}, ${s.outletId}, ${b.NAMA}, ${b.ID_BAHAN}, ${num(b.HARGA)}, ${b.SATUAN},
+                ${num(b.LEAD_TIME)}, ${num(b.RATING)}, ${b.TELP}, TRUE);`);
+  return ok({ ID_SUPPLIER: id });
 }
 async function apiSupplierUpdate(p) {
   const s = await requireSession(p);
@@ -228,27 +256,24 @@ async function apiInvPurchaseCreate(p) {
   const status = b.STATUS || 'Diterima';
   const tanggal = b.TANGGAL || new Date().toISOString().slice(0, 10);
 
-  // PO id allocation, the purchase insert, and the stock update run in one
-  // transaction with an atomic per-outlet counter, so concurrent requests can
-  // neither pick the same id_po nor leave a purchase committed without its
-  // matching stock change.
+  // PO id (date-based PO-YYYYMMDD-NNN), the purchase insert, the stock update
+  // and the movement-ledger row all run in one transaction with an atomic
+  // per-day counter, so concurrent requests can neither pick the same id_po nor
+  // leave a purchase committed without its matching stock change.
   const client = await db.connect();
   try {
     await client.sql`BEGIN`;
-    let id = b.ID_PO;
-    if (!id) {
-      const { rows } = await client.sql`
-        INSERT INTO counters (outlet_id, name, value) VALUES (${s.outletId}, 'pembelian', 1)
-        ON CONFLICT (outlet_id, name) DO UPDATE SET value = counters.value + 1
-        RETURNING value;`;
-      id = `PO${String(rows[0].value).padStart(3, '0')}`;
-    }
+    const id = (b.ID_PO && String(b.ID_PO).trim()) || await genDatedId(client, s.outletId, 'PO', tanggal);
     await client.sql`INSERT INTO pembelian (id_po, outlet_id, tanggal, id_bahan, id_supplier, qty, harga_beli, total, status)
               VALUES (${id}, ${s.outletId}, ${tanggal}, ${b.ID_BAHAN}, ${b.ID_SUPPLIER}, ${qty}, ${harga}, ${total}, ${status});`;
     if (status === 'Diterima') {
-      await client.sql`INSERT INTO stok (outlet_id, id_bahan, stok, min_stok)
+      const { rows } = await client.sql`INSERT INTO stok (outlet_id, id_bahan, stok, min_stok)
                 VALUES (${s.outletId}, ${b.ID_BAHAN}, ${qty}, 0)
-                ON CONFLICT (outlet_id, id_bahan) DO UPDATE SET stok = stok.stok + ${qty};`;
+                ON CONFLICT (outlet_id, id_bahan) DO UPDATE SET stok = stok.stok + ${qty}
+                RETURNING stok;`;
+      await client.sql`INSERT INTO stok_movements (id_transaksi, outlet_id, tanggal, id_bahan, jenis, qty, stok_akhir)
+                VALUES (${id}, ${s.outletId}, ${tanggal}, ${b.ID_BAHAN}, 'PURCHASE', ${qty}, ${num(rows[0].stok)})
+                ON CONFLICT (outlet_id, id_transaksi) DO NOTHING;`;
     }
     await client.sql`COMMIT`;
     return ok({ ID_PO: id });
@@ -292,18 +317,47 @@ async function apiInvPurchaseVoid(p) {
 async function apiInvSalesCreate(p) {
   const s = await requireSession(p);
   const b = p.data || p;
-  await sql`INSERT INTO penjualan (outlet_id, id_produk, qty, tanggal)
-            VALUES (${s.outletId}, ${b.ID_PRODUK}, ${num(b.QTY)}, ${b.TANGGAL || new Date().toISOString().slice(0, 10)});`;
-  return ok({ ID_PRODUK: b.ID_PRODUK });
+  const qty = num(b.QTY);
+  const tanggal = b.TANGGAL || new Date().toISOString().slice(0, 10);
+  // Date-based sales id (PJ-YYYYMMDD-NNN) allocated atomically per day.
+  const client = await db.connect();
+  try {
+    await client.sql`BEGIN`;
+    const idTx = await genDatedId(client, s.outletId, 'PJ', tanggal);
+    await client.sql`INSERT INTO penjualan (outlet_id, id_transaksi, id_produk, qty, tanggal)
+              VALUES (${s.outletId}, ${idTx}, ${b.ID_PRODUK}, ${qty}, ${tanggal});`;
+    await client.sql`COMMIT`;
+    return ok({ ID_TRANSAKSI: idTx, ID_PRODUK: b.ID_PRODUK });
+  } catch (e) {
+    try { await client.sql`ROLLBACK`; } catch { /* ignore */ }
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 async function apiInvAdjustment(p) {
   const s = await requireSession(p);
   const b = p.data || p;
-  await sql`INSERT INTO stok (outlet_id, id_bahan, stok, min_stok)
-            VALUES (${s.outletId}, ${b.ID_BAHAN}, ${num(b.STOK)}, ${num(b.MIN_STOK)})
-            ON CONFLICT (outlet_id, id_bahan)
-            DO UPDATE SET stok=${num(b.STOK)}, min_stok=${num(b.MIN_STOK)};`;
-  return ok({ ID_BAHAN: b.ID_BAHAN });
+  const stokBaru = num(b.STOK), minStok = num(b.MIN_STOK);
+  const tanggal = b.TANGGAL || new Date().toISOString().slice(0, 10);
+  // Set stock and record a dated movement (ADJ-YYYYMMDD-NNN) in one transaction.
+  const client = await db.connect();
+  try {
+    await client.sql`BEGIN`;
+    await client.sql`INSERT INTO stok (outlet_id, id_bahan, stok, min_stok)
+              VALUES (${s.outletId}, ${b.ID_BAHAN}, ${stokBaru}, ${minStok})
+              ON CONFLICT (outlet_id, id_bahan) DO UPDATE SET stok=${stokBaru}, min_stok=${minStok};`;
+    const idTx = await genDatedId(client, s.outletId, 'ADJ', tanggal);
+    await client.sql`INSERT INTO stok_movements (id_transaksi, outlet_id, tanggal, id_bahan, jenis, qty, stok_akhir, catatan)
+              VALUES (${idTx}, ${s.outletId}, ${tanggal}, ${b.ID_BAHAN}, 'ADJUST', ${stokBaru}, ${stokBaru}, ${b.CATATAN || null});`;
+    await client.sql`COMMIT`;
+    return ok({ ID_BAHAN: b.ID_BAHAN, ID_TRANSAKSI: idTx });
+  } catch (e) {
+    try { await client.sql`ROLLBACK`; } catch { /* ignore */ }
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 // ─── HPP (computed server-side for parity with the client engine) ────────────
@@ -376,6 +430,53 @@ async function apiHealth() {
     activeSessions: s[0].c,
     seeded: o[0].c > 0,
   });
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// Generate the next master-data id (e.g. B011, P006, S019) for an outlet by
+// taking the highest existing numeric suffix + 1. `table` is a fixed internal
+// identifier (never user input), so template interpolation here is safe.
+async function genId(outletId, table, prefix) {
+  const { rows } = await sql.query(`SELECT id FROM ${table} WHERE outlet_id = $1`, [outletId]);
+  let max = 0;
+  for (const r of rows) {
+    const m = String(r.id).match(/(\d+)\s*$/);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `${prefix}${String(max + 1).padStart(3, '0')}`;
+}
+
+// Insert a master row whose id is either supplied or auto-generated, retrying
+// with a fresh suffix if a concurrent create raced onto the same id (unique
+// violation 23505). Only auto-generated ids are retried; an explicit duplicate
+// id surfaces the error as before.
+async function insertWithGenId(outletId, table, prefix, providedId, doInsert) {
+  const provided = providedId && String(providedId).trim();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const id = provided || await genId(outletId, table, prefix);
+    try {
+      await doInsert(id);
+      return id;
+    } catch (e) {
+      if (e?.code === '23505' && !provided && attempt < 5) continue;
+      throw e;
+    }
+  }
+}
+
+// Date-based transaction id: PREFIX-YYYYMMDD-NNN, where NNN is a per-day
+// sequence allocated atomically from the counters table (name "prefix:date").
+// Must be called with a transaction-scoped client so the counter bump commits
+// (or rolls back) together with the row it identifies.
+async function genDatedId(client, outletId, prefix, dateStr) {
+  const compact = String(dateStr || new Date().toISOString().slice(0, 10)).slice(0, 10).replace(/-/g, '');
+  const name = `${prefix.toLowerCase()}:${compact}`;
+  const { rows } = await client.sql`
+    INSERT INTO counters (outlet_id, name, value) VALUES (${outletId}, ${name}, 1)
+    ON CONFLICT (outlet_id, name) DO UPDATE SET value = counters.value + 1
+    RETURNING value;`;
+  return `${prefix}-${compact}-${String(rows[0].value).padStart(3, '0')}`;
 }
 
 // ─── Registry ────────────────────────────────────────────────────────────────

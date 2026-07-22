@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useAuth } from "./AuthContext";
 import {
   INITIAL_BAHAN,
@@ -9,8 +9,13 @@ import {
   fetchStok,
   fetchSupplier,
   fetchPembelian,
+  createPurchase,
+  voidPurchase,
   round2, idr,
 } from "./kcc_data_layer";
+import { Modal, Field, TextInput, Select, Button, FormError, Toast } from "./FormKit";
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
 
 const S = {
   card: {
@@ -45,7 +50,8 @@ const STATUS_COLOR = {
 };
 
 export default function PembelianManager() {
-  const { token } = useAuth();
+  const { token, role, isDemo } = useAuth();
+  const canWrite = !isDemo && (role === "ADMIN" || role === "SUPER_ADMIN");
 
   const [filterStatus, setFilterStatus] = useState("Semua");
   const [searchQ, setSearchQ]           = useState("");
@@ -56,20 +62,38 @@ export default function PembelianManager() {
   const [supplierList, setSupplierList] = useState(SUPPLIER_DATA);
   const [pembelianList, setPembelianList] = useState(PEMBELIAN_DATA);
 
-  useEffect(() => {
+  // Mutation UI state
+  const [showAdd, setShowAdd] = useState(false);
+  const [toast, setToast]     = useState("");
+  const flashToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
+
+  const reload = useCallback(async () => {
     if (!token) return;
-    Promise.all([
-      fetchBahan(token),
-      fetchStok(token),
-      fetchSupplier(token),
-      fetchPembelian(token),
-    ]).then(([bahanData, stokData, supplierData, pembelianData]) => {
-      if (bahanData)    setBahanList(bahanData);
-      if (stokData)     setStokBahan(stokData);
-      if (supplierData) setSupplierList(supplierData);
-      if (pembelianData) setPembelianList(pembelianData);
-    });
+    const [bahanData, stokData, supplierData, pembelianData] = await Promise.all([
+      fetchBahan(token), fetchStok(token), fetchSupplier(token), fetchPembelian(token),
+    ]);
+    if (bahanData)     setBahanList(bahanData);
+    if (stokData)      setStokBahan(stokData);
+    if (supplierData)  setSupplierList(supplierData);
+    if (pembelianData) setPembelianList(pembelianData);
   }, [token]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const [voidingId, setVoidingId] = useState(null);
+  async function handleVoid(id) {
+    if (!window.confirm(`Batalkan pembelian ${id}? Stok yang sudah masuk akan dikembalikan.`)) return;
+    setVoidingId(id);
+    try {
+      await voidPurchase(token, id);
+      await reload();
+      flashToast(`Pembelian ${id} dibatalkan`);
+    } catch (e) {
+      window.alert("Gagal membatalkan: " + (e.message || "kesalahan server"));
+    } finally {
+      setVoidingId(null);
+    }
+  }
 
   const bahanMap = useMemo(() => {
     const m = {};
@@ -239,8 +263,15 @@ export default function PembelianManager() {
                   </button>
                 ))}
               </div>
-              <div style={{ marginLeft: "auto", fontSize: 12, color: "#8a857b" }}>
-                {filtered.length} transaksi
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 12, color: "#8a857b" }}>{filtered.length} transaksi</span>
+                {canWrite ? (
+                  <Button onClick={() => setShowAdd(true)}>＋ Tambah Pembelian</Button>
+                ) : (
+                  <span style={{ fontSize: 11.5, color: "#615d55" }}>
+                    {isDemo ? "Mode demo — hanya lihat" : "Perlu akses admin untuk input"}
+                  </span>
+                )}
               </div>
             </div>
           </Card>
@@ -249,7 +280,7 @@ export default function PembelianManager() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["No. PO", "Tanggal", "Bahan", "Supplier", "Qty", "Harga/Satuan", "Total", "Status"].map(h => (
+                  {["No. PO", "Tanggal", "Bahan", "Supplier", "Qty", "Harga/Satuan", "Total", "Status", ...(canWrite ? ["Aksi"] : [])].map(h => (
                     <th key={h} style={S.th}>{h}</th>
                   ))}
                 </tr>
@@ -285,6 +316,24 @@ export default function PembelianManager() {
                           {r.STATUS}
                         </span>
                       </td>
+                      {canWrite && (
+                        <td style={S.td}>
+                          {r.STATUS !== "Void" && r.STATUS !== "Batal" ? (
+                            <button
+                              onClick={() => handleVoid(r.ID_PO)}
+                              disabled={voidingId === r.ID_PO}
+                              style={{
+                                padding: "4px 10px", fontSize: 11.5, fontWeight: 600,
+                                color: "#d1685c", background: "rgba(209,104,92,0.10)",
+                                border: "1px solid rgba(209,104,92,0.35)", borderRadius: 6,
+                                cursor: voidingId === r.ID_PO ? "wait" : "pointer",
+                              }}
+                            >
+                              {voidingId === r.ID_PO ? "…" : "Batalkan"}
+                            </button>
+                          ) : <span style={{ color: "#615d55" }}>—</span>}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -431,6 +480,121 @@ export default function PembelianManager() {
           )}
         </div>
       )}
+
+      {showAdd && (
+        <AddPurchaseModal
+          token={token}
+          bahanList={bahanList}
+          supplierList={supplierList}
+          onClose={() => setShowAdd(false)}
+          onDone={async (id) => { setShowAdd(false); await reload(); flashToast(`Pembelian ${id} tersimpan`); }}
+        />
+      )}
+      <Toast show={!!toast}>{toast}</Toast>
     </div>
+  );
+}
+
+// ─── Add Purchase modal ──────────────────────────────────────────────────────
+function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone }) {
+  const [idBahan, setIdBahan]       = useState(bahanList[0]?.ID_BAHAN || "");
+  const [idSupplier, setIdSupplier] = useState("");
+  const [tanggal, setTanggal]       = useState(todayStr());
+  const [qty, setQty]               = useState("");
+  const [harga, setHarga]           = useState("");
+  const [status, setStatus]         = useState("Diterima");
+  const [saving, setSaving]         = useState(false);
+  const [error, setError]           = useState(null);
+
+  // Suppliers that carry the chosen bahan (fallback: all suppliers).
+  const bahanSuppliers = supplierList.filter(s => s.ID_BAHAN === idBahan);
+  const supplierOptions = bahanSuppliers.length ? bahanSuppliers : supplierList;
+
+  // Default supplier + auto-fill price when bahan changes.
+  useEffect(() => {
+    const first = supplierOptions[0];
+    setIdSupplier(first?.ID_SUPPLIER || "");
+    if (first && !harga) setHarga(String(first.HARGA));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idBahan]);
+
+  const onPickSupplier = (sid) => {
+    setIdSupplier(sid);
+    const sup = supplierList.find(s => s.ID_SUPPLIER === sid);
+    if (sup) setHarga(String(sup.HARGA));
+  };
+
+  const bahan = bahanList.find(b => b.ID_BAHAN === idBahan);
+  const total = (Number(qty) || 0) * (Number(harga) || 0);
+
+  async function submit() {
+    setError(null);
+    if (!idBahan)              return setError("Pilih bahan.");
+    if (!(Number(qty) > 0))    return setError("Qty harus lebih dari 0.");
+    if (!(Number(harga) > 0))  return setError("Harga beli harus lebih dari 0.");
+    setSaving(true);
+    try {
+      const res = await createPurchase(token, {
+        ID_BAHAN: idBahan, ID_SUPPLIER: idSupplier || null, TANGGAL: tanggal,
+        QTY: Number(qty), HARGA_BELI: Number(harga), TOTAL: total, STATUS: status,
+      });
+      onDone(res?.data?.ID_PO || "");
+    } catch (e) {
+      setError(e.message || "Gagal menyimpan pembelian.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Tambah Pembelian"
+      subtitle="Catat pembelian bahan — stok bertambah otomatis jika status Diterima"
+      onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Batal</Button>
+        <Button onClick={submit} loading={saving}>Simpan Pembelian</Button>
+      </>}
+    >
+      <FormError>{error}</FormError>
+      <Field label="Bahan">
+        <Select value={idBahan} onChange={e => setIdBahan(e.target.value)}>
+          {bahanList.map(b => <option key={b.ID_BAHAN} value={b.ID_BAHAN}>{b.NAMA_BAHAN}</option>)}
+        </Select>
+      </Field>
+      <Field label="Supplier" hint={supplierOptions.length === 0 ? "Belum ada supplier untuk bahan ini" : undefined}>
+        <Select value={idSupplier} onChange={e => onPickSupplier(e.target.value)}>
+          <option value="">— tanpa supplier —</option>
+          {supplierOptions.map(s => <option key={s.ID_SUPPLIER} value={s.ID_SUPPLIER}>{s.NAMA} · {idr(s.HARGA)}/{s.SATUAN}</option>)}
+        </Select>
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label={`Qty (${bahan?.SATUAN_BELI || "satuan"})`}>
+          <TextInput type="number" min="0" step="any" value={qty} onChange={e => setQty(e.target.value)} placeholder="0" />
+        </Field>
+        <Field label="Harga Beli / satuan">
+          <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} placeholder="0" />
+        </Field>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label="Tanggal">
+          <TextInput type="date" value={tanggal} onChange={e => setTanggal(e.target.value)} />
+        </Field>
+        <Field label="Status">
+          <Select value={status} onChange={e => setStatus(e.target.value)}>
+            <option value="Diterima">Diterima (stok bertambah)</option>
+            <option value="Pending">Pending</option>
+          </Select>
+        </Field>
+      </div>
+      <div style={{
+        marginTop: 4, padding: "10px 13px", borderRadius: 8,
+        background: "rgba(201,100,66,0.10)", border: "1px solid rgba(201,100,66,0.28)",
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+      }}>
+        <span style={{ fontSize: 12.5, color: "#a9a49a" }}>Total</span>
+        <span style={{ fontSize: 18, fontWeight: 800, color: "#c96442", fontFamily: "monospace" }}>{idr(total)}</span>
+      </div>
+    </Modal>
   );
 }
