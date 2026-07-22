@@ -44,6 +44,10 @@ export async function login({ outletCode, username, password }) {
     return { success: false, code: 'USER_INACTIVE', message: 'Akun Anda tidak aktif. Hubungi administrator.' };
   }
 
+  // Housekeeping: drop this user's expired sessions so the table stays small
+  // no matter how many accounts log in repeatedly over time.
+  await sql`DELETE FROM sessions WHERE user_id = ${user.id} AND expires_at < NOW();`;
+
   const token = newToken();
   const expires = new Date(Date.now() + SESSION_TTL_HOURS * 3600 * 1000).toISOString();
   await sql`INSERT INTO sessions (token, user_id, expires_at) VALUES (${token}, ${user.id}, ${expires});`;

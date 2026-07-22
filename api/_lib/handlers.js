@@ -356,10 +356,26 @@ async function apiSetAppConfig(p) {
 }
 
 // ─── Health / diagnostics (no auth) ──────────────────────────────────────────
+// GET /api/rpc?action=apiHealth — verifies the database is attached AND fully
+// provisioned: reports outlet/user counts so a deploy can be checked with one
+// URL after attaching Vercel Postgres.
 
 async function apiHealth() {
-  const { rows } = await sql`SELECT NOW() AS now;`;
-  return ok({ status: 'ok', db: 'connected', now: rows[0].now });
+  const [{ rows: t }, { rows: o }, { rows: u }, { rows: s }] = await Promise.all([
+    sql`SELECT NOW() AS now;`,
+    sql`SELECT COUNT(*)::int AS c FROM outlets WHERE active;`,
+    sql`SELECT COUNT(*)::int AS c FROM users WHERE active;`,
+    sql`SELECT COUNT(*)::int AS c FROM sessions WHERE expires_at > NOW();`,
+  ]);
+  return ok({
+    status: 'ok',
+    db: 'connected',
+    now: t[0].now,
+    outlets: o[0].c,
+    users: u[0].c,
+    activeSessions: s[0].c,
+    seeded: o[0].c > 0,
+  });
 }
 
 // ─── Registry ────────────────────────────────────────────────────────────────
