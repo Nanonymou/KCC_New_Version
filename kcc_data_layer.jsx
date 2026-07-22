@@ -308,10 +308,10 @@ export const idr = (n) =>
 export const pct = (n) => `${Number(n).toFixed(1)}%`;
 
 export function marginColor(m) {
-  if (m >= 50) return "#22c55e";
-  if (m >= 35) return "#84cc16";
-  if (m >= 20) return "#f59e0b";
-  return "#ef4444";
+  if (m >= 50) return "#7fa86a";
+  if (m >= 35) return "#a9c46a";
+  if (m >= 20) return "#d99a4e";
+  return "#d1685c";
 }
 
 // ── HPP Engine ────────────────────────────────────────────────
