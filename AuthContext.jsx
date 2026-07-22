@@ -25,6 +25,21 @@ import { gasRun } from './useGAS';
 
 const STORAGE_KEY = 'kcc_session';
 
+// ─── Demo mode ────────────────────────────────────────────────────────────
+// A fully client-side session used when the backend/database is unreachable
+// (e.g. Vercel Postgres not attached yet). All fetch helpers fail gracefully
+// and components fall back to the built-in sample data, so the whole app is
+// browsable without a server.
+export const DEMO_TOKEN = 'demo-local';
+
+const DEMO_SESSION = {
+  userId: 'DEMO',
+  username: 'demo',
+  role: 'SUPER_ADMIN',
+  outletId: 'DEMO',
+  outletName: 'Mode Demo',
+};
+
 function persistSession(data) {
   try {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -68,6 +83,13 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const stored = readPersistedSession();
     if (!stored?.token) {
+      setLoading(false);
+      return;
+    }
+
+    // Demo sessions are purely local — no server round trip to validate.
+    if (stored.token === DEMO_TOKEN) {
+      _applySession(DEMO_TOKEN, stored.session || DEMO_SESSION);
       setLoading(false);
       return;
     }
@@ -126,6 +148,13 @@ export function AuthProvider({ children }) {
     _applySession(res.token, res.session);
   }, []);
 
+  // ── loginDemo ────────────────────────────────────────────────────────────
+  // Enter a client-side demo session (no backend). Available from LoginPage
+  // when the server/database is unreachable.
+  const loginDemo = useCallback(() => {
+    _applySession(DEMO_TOKEN, { ...DEMO_SESSION, loginAt: new Date().toISOString() });
+  }, []);
+
   // ── logout ───────────────────────────────────────────────────────────────
   const logout = useCallback(async () => {
     const currentToken = token;
@@ -136,8 +165,8 @@ export function AuthProvider({ children }) {
     setRole(null);
     clearPersistedSession();
 
-    if (currentToken) {
-      // Fire-and-forget — GAS will invalidate the session server-side
+    if (currentToken && currentToken !== DEMO_TOKEN) {
+      // Fire-and-forget — the server invalidates the session
       gasRun('apiLogout', { token: currentToken }).catch(() => {
         // Non-critical: local state already cleared
       });
@@ -164,9 +193,11 @@ export function AuthProvider({ children }) {
     role,
     loading,
     login,
+    loginDemo,
     logout,
     switchOutlet,
     isAuthenticated: !!token,
+    isDemo: token === DEMO_TOKEN,
   };
 
   return (

@@ -18,28 +18,29 @@
  */
 
 import { useAuth } from './AuthContext';
+import { T } from './theme';
 
-// ─── Inline spinner matching style.html design tokens ─────────────────────
+// ─── Inline spinner matching the KCC design system ────────────────────────
 
 function FullScreenSpinner() {
   return (
     <div style={{
       minHeight       : '100vh',
-      background      : 'var(--c-bg, #f5f6fa)',
+      background      : T.bg,
       display         : 'flex',
       flexDirection   : 'column',
       alignItems      : 'center',
       justifyContent  : 'center',
       gap             : 14,
-      color           : 'var(--c-muted, #6b7280)',
-      fontFamily      : "'Inter', 'Segoe UI', system-ui, sans-serif",
+      color           : T.textMuted,
+      fontFamily      : T.fontUI,
       fontSize        : 14,
     }}>
       <div style={{
         width          : 32,
         height         : 32,
-        border         : '3px solid var(--c-border, #dde1ea)',
-        borderTopColor : 'var(--c-primary, #1e3a5f)',
+        border         : `3px solid ${T.border}`,
+        borderTopColor : T.primary,
         borderRadius   : '50%',
         animation      : 'spin .7s linear infinite',
       }} />

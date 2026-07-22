@@ -339,10 +339,10 @@ function runAllRules(bahanList = INITIAL_BAHAN, stokList = STOK_BAHAN, supplierL
 // ═══════════════════════════════════════════════════════════════════════════
 
 const PRIORITY_CONFIG = {
-  KRITIS:     { color: "#ef4444", bg: "#1a0505", border: "#ef444433", badge: "#ef4444", label: "KRITIS"     },
-  PERINGATAN: { color: "#f59e0b", bg: "#1a1005", border: "#f59e0b33", badge: "#f59e0b", label: "PERINGATAN" },
-  SARAN:      { color: "#3b82f6", bg: "#050d1a", border: "#3b82f633", badge: "#3b82f6", label: "SARAN"      },
-  OK:         { color: "#22c55e", bg: "#051a0a", border: "#22c55e33", badge: "#22c55e", label: "OK"         },
+  KRITIS:     { color: "#d1685c", bg: "#2a1d1a", border: "#d1685c33", badge: "#d1685c", label: "KRITIS"     },
+  PERINGATAN: { color: "#d99a4e", bg: "#2a241c", border: "#d99a4e33", badge: "#d99a4e", label: "PERINGATAN" },
+  SARAN:      { color: "#6ea3c4", bg: "#211f1d", border: "#6ea3c433", badge: "#6ea3c4", label: "SARAN"      },
+  OK:         { color: "#7fa86a", bg: "#22271f", border: "#7fa86a33", badge: "#7fa86a", label: "OK"         },
 };
 
 function Badge({ priority }) {
@@ -363,13 +363,13 @@ function Badge({ priority }) {
 function SummaryCard({ label, value, color, icon }) {
   return (
     <div style={{
-      background: "#131626", border: `1px solid ${color}33`,
+      background: "#211f1d", border: `1px solid ${color}33`,
       borderRadius: 12, padding: "14px 18px",
       display: "flex", flexDirection: "column", gap: 4,
     }}>
       <div style={{ fontSize: 22 }}>{icon}</div>
       <div style={{ fontSize: 24, fontWeight: 800, color, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-      <div style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+      <div style={{ fontSize: 11, color: "#8a857b", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
     </div>
   );
 }
@@ -382,8 +382,8 @@ function RekomendasiCard({ rec, index }) {
     <div
       onClick={() => setExpanded(e => !e)}
       style={{
-        background: expanded ? c.bg : "#0d1020",
-        border: `1px solid ${expanded ? c.color + "44" : "#1e2840"}`,
+        background: expanded ? c.bg : "#1f1e1c",
+        border: `1px solid ${expanded ? c.color + "44" : "#3a3834"}`,
         borderLeft: `3px solid ${c.color}`,
         borderRadius: 10, padding: "14px 16px",
         cursor: "pointer", transition: "all 0.2s ease",
@@ -396,16 +396,16 @@ function RekomendasiCard({ rec, index }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
             <Badge priority={rec.priority} />
-            <span style={{ fontSize: 10, color: "#475569", background: "#161927", padding: "2px 7px", borderRadius: 99, border: "1px solid #1e2840" }}>
+            <span style={{ fontSize: 10, color: "#78746b", background: "#302f2c", padding: "2px 7px", borderRadius: 99, border: "1px solid #3a3834" }}>
               {rec.category}
             </span>
-            <span style={{ fontSize: 10, color: "#64748b" }}>{rec.produk}</span>
+            <span style={{ fontSize: 10, color: "#8a857b" }}>{rec.produk}</span>
           </div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", lineHeight: 1.45 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#ecebe5", lineHeight: 1.45 }}>
             {rec.action}
           </div>
         </div>
-        <span style={{ fontSize: 12, color: "#334155", flexShrink: 0, marginTop: 2 }}>
+        <span style={{ fontSize: 12, color: "#615d55", flexShrink: 0, marginTop: 2 }}>
           {expanded ? "▲" : "▼"}
         </span>
       </div>
@@ -415,7 +415,7 @@ function RekomendasiCard({ rec, index }) {
         <div style={{
           marginTop: 12, paddingTop: 12,
           borderTop: `1px solid ${c.color}22`,
-          fontSize: 12, color: "#94a3b8", lineHeight: 1.6,
+          fontSize: 12, color: "#a9a49a", lineHeight: 1.6,
         }}>
           {rec.detail}
         </div>
@@ -429,29 +429,29 @@ function FoodCostGauge({ value }) {
   const kritis = THRESHOLDS.FOOD_COST_KRITIS_PCT;
   const max    = 50;
   const pctPos = Math.min(value / max * 100, 100);
-  const color  = value > kritis ? "#ef4444" : value > target ? "#f59e0b" : "#22c55e";
+  const color  = value > kritis ? "#d1685c" : value > target ? "#d99a4e" : "#7fa86a";
   const label  = value > kritis ? "DARURAT" : value > target ? "TINGGI" : "AMAN";
 
   return (
-    <div style={{ background: "#131626", border: "1px solid #1e2840", borderRadius: 12, padding: "16px 20px" }}>
+    <div style={{ background: "#211f1d", border: "1px solid #3a3834", borderRadius: 12, padding: "16px 20px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <span style={{ fontSize: 12, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.06em" }}>Food Cost Hari Ini</span>
+        <span style={{ fontSize: 12, color: "#8a857b", textTransform: "uppercase", letterSpacing: "0.06em" }}>Food Cost Hari Ini</span>
         <span style={{ fontSize: 11, fontWeight: 700, color, background: color + "20", padding: "2px 8px", borderRadius: 99 }}>{label}</span>
       </div>
       <div style={{ fontSize: 32, fontWeight: 800, color, marginBottom: 10, fontVariantNumeric: "tabular-nums" }}>
         {pct(value)}
       </div>
       {/* Bar gauge */}
-      <div style={{ height: 8, background: "#1e2840", borderRadius: 99, overflow: "hidden", position: "relative" }}>
+      <div style={{ height: 8, background: "#3a3834", borderRadius: 99, overflow: "hidden", position: "relative" }}>
         <div style={{ height: "100%", width: `${pctPos}%`, background: color, borderRadius: 99, transition: "width 0.5s ease" }} />
         {/* Target marker */}
-        <div style={{ position: "absolute", top: 0, left: `${target / max * 100}%`, width: 2, height: "100%", background: "#22c55e88" }} />
-        <div style={{ position: "absolute", top: 0, left: `${kritis / max * 100}%`, width: 2, height: "100%", background: "#ef444488" }} />
+        <div style={{ position: "absolute", top: 0, left: `${target / max * 100}%`, width: 2, height: "100%", background: "#7fa86a88" }} />
+        <div style={{ position: "absolute", top: 0, left: `${kritis / max * 100}%`, width: 2, height: "100%", background: "#d1685c88" }} />
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 10, color: "#334155" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 10, color: "#615d55" }}>
         <span>0%</span>
-        <span style={{ color: "#22c55e88" }}>Target {pct(target)}</span>
-        <span style={{ color: "#ef444488" }}>Kritis {pct(kritis)}</span>
+        <span style={{ color: "#7fa86a88" }}>Target {pct(target)}</span>
+        <span style={{ color: "#d1685c88" }}>Kritis {pct(kritis)}</span>
         <span>{pct(max)}</span>
       </div>
     </div>
@@ -462,7 +462,7 @@ function RuleModuleList({ recs, filter }) {
   const filtered = filter === "SEMUA" ? recs : recs.filter(r => r.priority === filter);
   if (filtered.length === 0) {
     return (
-      <div style={{ textAlign: "center", padding: "40px 20px", color: "#334155" }}>
+      <div style={{ textAlign: "center", padding: "40px 20px", color: "#615d55" }}>
         <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
         <div style={{ fontSize: 13 }}>Tidak ada rekomendasi untuk kategori ini</div>
       </div>
@@ -502,10 +502,10 @@ export default function KCCRecommendationEngine() {
   );
 
   const tabs = [
-    { key: "SEMUA",     label: `Semua (${summary.total})`,             color: "#94a3b8" },
-    { key: "KRITIS",    label: `🔴 Kritis (${summary.kritis})`,        color: "#ef4444" },
-    { key: "PERINGATAN",label: `🟡 Peringatan (${summary.peringatan})`,color: "#f59e0b" },
-    { key: "SARAN",     label: `🔵 Saran (${summary.saran})`,          color: "#3b82f6" },
+    { key: "SEMUA",     label: `Semua (${summary.total})`,             color: "#a9a49a" },
+    { key: "KRITIS",    label: `🔴 Kritis (${summary.kritis})`,        color: "#d1685c" },
+    { key: "PERINGATAN",label: `🟡 Peringatan (${summary.peringatan})`,color: "#d99a4e" },
+    { key: "SARAN",     label: `🔵 Saran (${summary.saran})`,          color: "#6ea3c4" },
   ];
 
   return (
@@ -523,20 +523,20 @@ export default function KCCRecommendationEngine() {
       {summary.kritis > 0 && (
         <div style={{
           display: "flex", alignItems: "center", gap: 8, marginBottom: 16,
-          background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-          borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#f87171", fontWeight: 600,
+          background: "rgba(209,104,92,0.1)", border: "1px solid rgba(209,104,92,0.3)",
+          borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#dd8078", fontWeight: 600,
         }}>
-          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", animation: "pulse 1s infinite" }} />
+          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#d1685c", animation: "pulse 1s infinite" }} />
           {summary.kritis} masalah kritis perlu tindakan segera
         </div>
       )}
 
         {/* ── SUMMARY CARDS ── */}
         <div className="rec-grid rec-4col" style={{ marginBottom: 20 }}>
-          <SummaryCard label="Total Rekomendasi" value={summary.total}      color="#94a3b8" icon="📋" />
-          <SummaryCard label="Kritis"             value={summary.kritis}     color="#ef4444" icon="🚨" />
-          <SummaryCard label="Peringatan"         value={summary.peringatan} color="#f59e0b" icon="⚠️" />
-          <SummaryCard label="Saran"              value={summary.saran}      color="#3b82f6" icon="💡" />
+          <SummaryCard label="Total Rekomendasi" value={summary.total}      color="#a9a49a" icon="📋" />
+          <SummaryCard label="Kritis"             value={summary.kritis}     color="#d1685c" icon="🚨" />
+          <SummaryCard label="Peringatan"         value={summary.peringatan} color="#d99a4e" icon="⚠️" />
+          <SummaryCard label="Saran"              value={summary.saran}      color="#6ea3c4" icon="💡" />
         </div>
 
         {/* ── FOOD COST GAUGE ── */}
@@ -546,10 +546,10 @@ export default function KCCRecommendationEngine() {
 
         {/* ── RULE MODULES INFO ── */}
         <div style={{
-          background: "#131626", border: "1px solid #1e2840",
+          background: "#211f1d", border: "1px solid #3a3834",
           borderRadius: 12, padding: "14px 18px", marginBottom: 20,
         }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#78746b", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
             Modul Rule Engine Aktif
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -562,12 +562,12 @@ export default function KCCRecommendationEngine() {
             ].map(m => (
               <div key={m.label} style={{
                 display: "flex", alignItems: "center", gap: 6,
-                background: "#0d1020", border: "1px solid #1e2840",
+                background: "#1f1e1c", border: "1px solid #3a3834",
                 borderRadius: 8, padding: "6px 10px", fontSize: 11,
               }}>
                 <span>{m.icon}</span>
-                <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{m.label}</span>
-                <span style={{ color: "#334155" }}>— {m.desc}</span>
+                <span style={{ color: "#ecebe5", fontWeight: 600 }}>{m.label}</span>
+                <span style={{ color: "#615d55" }}>— {m.desc}</span>
               </div>
             ))}
           </div>
@@ -583,9 +583,9 @@ export default function KCCRecommendationEngine() {
                 padding: "7px 14px", fontSize: 12, fontWeight: 600,
                 borderRadius: 8, border: "1px solid",
                 cursor: "pointer", transition: "all 0.15s",
-                background:   activeTab === t.key ? t.color + "20" : "#131626",
-                color:        activeTab === t.key ? t.color         : "#475569",
-                borderColor:  activeTab === t.key ? t.color + "55"  : "#1e2840",
+                background:   activeTab === t.key ? t.color + "20" : "#211f1d",
+                color:        activeTab === t.key ? t.color         : "#78746b",
+                borderColor:  activeTab === t.key ? t.color + "55"  : "#3a3834",
               }}
             >
               {t.label}
@@ -599,11 +599,11 @@ export default function KCCRecommendationEngine() {
         </div>
 
         {/* ── FOOTER ── */}
-        <div style={{ marginTop: 24, padding: "16px 0", borderTop: "1px solid #1e2840", display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontSize: 11, color: "#334155" }}>
+        <div style={{ marginTop: 24, padding: "16px 0", borderTop: "1px solid #3a3834", display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontSize: 11, color: "#615d55" }}>
             Rule-Based · Tidak menggunakan AI
           </div>
-          <div style={{ display: "flex", gap: 16, fontSize: 11, color: "#334155" }}>
+          <div style={{ display: "flex", gap: 16, fontSize: 11, color: "#615d55" }}>
             <span>Margin target: {THRESHOLDS.MARGIN_TARGET_PCT}%</span>
             <span>Food cost target: {THRESHOLDS.FOOD_COST_TARGET_PCT}%</span>
             <span>Kenaikan supplier: ≥{THRESHOLDS.HARGA_NAIK_MIN_PCT}%</span>

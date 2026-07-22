@@ -14,23 +14,23 @@ import {
 
 const S = {
   card: {
-    background: "#161927",
-    border: "1px solid #1e2840",
+    background: "#302f2c",
+    border: "1px solid #3a3834",
     borderRadius: 14,
     padding: 20,
   },
   label: {
-    fontSize: 11, fontWeight: 700, color: "#475569",
+    fontSize: 11, fontWeight: 700, color: "#78746b",
     textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12,
   },
   th: {
     padding: "9px 12px", textAlign: "left", fontSize: 11,
-    color: "#475569", fontWeight: 600, textTransform: "uppercase",
-    letterSpacing: "0.05em", borderBottom: "1px solid #1e2840",
+    color: "#78746b", fontWeight: 600, textTransform: "uppercase",
+    letterSpacing: "0.05em", borderBottom: "1px solid #3a3834",
   },
   td: {
     padding: "11px 12px", fontSize: 13,
-    borderBottom: "1px solid #1e2840", verticalAlign: "middle",
+    borderBottom: "1px solid #3a3834", verticalAlign: "middle",
   },
 };
 
@@ -40,10 +40,10 @@ function Card({ children, style = {} }) {
 
 function statusStok(stok, minStok) {
   const rasio = minStok > 0 ? stok / minStok : 99;
-  if (rasio < 0.5) return { label: "Kritis",  color: "#ef4444" };
-  if (rasio < 1.0) return { label: "Rendah",  color: "#f59e0b" };
-  if (rasio < 1.5) return { label: "Cukup",   color: "#84cc16" };
-  return               { label: "Aman",    color: "#22c55e" };
+  if (rasio < 0.5) return { label: "Kritis",  color: "#d1685c" };
+  if (rasio < 1.0) return { label: "Rendah",  color: "#d99a4e" };
+  if (rasio < 1.5) return { label: "Cukup",   color: "#a9c46a" };
+  return               { label: "Aman",    color: "#7fa86a" };
 }
 
 export default function InventoryManager() {
@@ -136,20 +136,20 @@ export default function InventoryManager() {
   const totalNilai = inventoryRows.reduce((s, r) => s + r.NILAI_STOK, 0);
 
   const statusFilters = ["Semua", "Kritis", "Rendah", "Cukup", "Aman"];
-  const statusColor   = { Kritis: "#ef4444", Rendah: "#f59e0b", Cukup: "#84cc16", Aman: "#22c55e", Semua: "#64748b" };
+  const statusColor   = { Kritis: "#d1685c", Rendah: "#d99a4e", Cukup: "#a9c46a", Aman: "#7fa86a", Semua: "#8a857b" };
 
   return (
     <div>
       <style>{`
-        .inv-row:hover { background: rgba(249,115,22,0.04) !important; }
+        .inv-row:hover { background: rgba(201,100,66,0.04) !important; }
       `}</style>
 
       {/* Header */}
       <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 20, fontWeight: 800, color: "#f1f5f9", letterSpacing: "-0.02em" }}>
+        <div style={{ fontSize: 20, fontWeight: 800, color: "#ecebe5", letterSpacing: "-0.02em" }}>
           📦 Inventory Bahan Baku
         </div>
-        <div style={{ fontSize: 13, color: "#475569", marginTop: 4 }}>
+        <div style={{ fontSize: 13, color: "#78746b", marginTop: 4 }}>
           Stok real-time, nilai persediaan & ketahanan bahan
         </div>
       </div>
@@ -157,15 +157,15 @@ export default function InventoryManager() {
       {/* KPI */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
         {[
-          { label: "Total Bahan", value: bahanList.length, accent: "#f97316", icon: "📦" },
-          { label: "Stok Kritis", value: kritis, accent: "#ef4444", icon: "🔴" },
-          { label: "Stok Rendah", value: rendah, accent: "#f59e0b", icon: "🟡" },
-          { label: "Nilai Stok", value: idr(totalNilai), accent: "#22c55e", icon: "💰" },
+          { label: "Total Bahan", value: bahanList.length, accent: "#c96442", icon: "📦" },
+          { label: "Stok Kritis", value: kritis, accent: "#d1685c", icon: "🔴" },
+          { label: "Stok Rendah", value: rendah, accent: "#d99a4e", icon: "🟡" },
+          { label: "Nilai Stok", value: idr(totalNilai), accent: "#7fa86a", icon: "💰" },
         ].map(k => (
           <Card key={k.label}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div>
-                <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>{k.label}</div>
+                <div style={{ fontSize: 11, color: "#8a857b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>{k.label}</div>
                 <div style={{ fontSize: 24, fontWeight: 800, color: k.accent, letterSpacing: "-0.02em" }}>{k.value}</div>
               </div>
               <div style={{ fontSize: 20, opacity: 0.6 }}>{k.icon}</div>
@@ -183,8 +183,8 @@ export default function InventoryManager() {
             value={searchQ}
             onChange={e => setSearchQ(e.target.value)}
             style={{
-              background: "#0f1117", border: "1px solid #334155",
-              borderRadius: 8, padding: "7px 12px", color: "#f1f5f9",
+              background: "#1f1e1c", border: "1px solid #615d55",
+              borderRadius: 8, padding: "7px 12px", color: "#ecebe5",
               fontSize: 13, outline: "none", width: 200,
             }}
           />
@@ -196,9 +196,9 @@ export default function InventoryManager() {
                 style={{
                   padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
                   cursor: "pointer", border: "1px solid",
-                  borderColor: filterStatus === s ? statusColor[s] : "#1e2840",
+                  borderColor: filterStatus === s ? statusColor[s] : "#3a3834",
                   background: filterStatus === s ? statusColor[s] + "22" : "transparent",
-                  color: filterStatus === s ? statusColor[s] : "#64748b",
+                  color: filterStatus === s ? statusColor[s] : "#8a857b",
                   transition: "all 0.15s",
                 }}
               >
@@ -207,7 +207,7 @@ export default function InventoryManager() {
             ))}
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
-            <span style={{ fontSize: 12, color: "#64748b" }}>Sort:</span>
+            <span style={{ fontSize: 12, color: "#8a857b" }}>Sort:</span>
             {[["status","Status"],["nama","Nama"],["stok","Stok"],["nilai","Nilai"]].map(([v, l]) => (
               <button
                 key={v}
@@ -215,9 +215,9 @@ export default function InventoryManager() {
                 style={{
                   padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 500,
                   cursor: "pointer", border: "1px solid",
-                  borderColor: sortBy === v ? "#f97316" : "#1e2840",
-                  background: sortBy === v ? "rgba(249,115,22,0.12)" : "transparent",
-                  color: sortBy === v ? "#f97316" : "#64748b",
+                  borderColor: sortBy === v ? "#c96442" : "#3a3834",
+                  background: sortBy === v ? "rgba(201,100,66,0.12)" : "transparent",
+                  color: sortBy === v ? "#c96442" : "#8a857b",
                   transition: "all 0.15s",
                 }}
               >
@@ -244,31 +244,31 @@ export default function InventoryManager() {
               const rasio = b.RASIO >= 99 ? "—" : b.RASIO.toFixed(2) + "x";
               return (
                 <tr key={b.ID_BAHAN} className="inv-row" style={{ background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)" }}>
-                  <td style={{ ...S.td, fontWeight: 600, color: "#f1f5f9" }}>
+                  <td style={{ ...S.td, fontWeight: 600, color: "#ecebe5" }}>
                     {b.NAMA_BAHAN}
-                    <div style={{ fontSize: 11, color: "#475569", fontWeight: 400 }}>{b.ID_BAHAN}</div>
+                    <div style={{ fontSize: 11, color: "#78746b", fontWeight: 400 }}>{b.ID_BAHAN}</div>
                   </td>
                   <td style={{ ...S.td, fontFamily: "monospace" }}>
                     <span style={{ fontWeight: 700, color: color }}>{b.STOK}</span>
-                    <span style={{ color: "#475569" }}> {b.SATUAN_BELI}</span>
+                    <span style={{ color: "#78746b" }}> {b.SATUAN_BELI}</span>
                   </td>
-                  <td style={{ ...S.td, color: "#64748b", fontFamily: "monospace" }}>
+                  <td style={{ ...S.td, color: "#8a857b", fontFamily: "monospace" }}>
                     {b.MIN_STOK} {b.SATUAN_BELI}
                   </td>
                   <td style={{ ...S.td, color: color, fontWeight: 700, fontFamily: "monospace" }}>
                     {rasio}
                   </td>
-                  <td style={{ ...S.td, fontFamily: "monospace", color: "#94a3b8" }}>
+                  <td style={{ ...S.td, fontFamily: "monospace", color: "#a9a49a" }}>
                     {b.KEB_HARIAN > 0 ? `${b.KEB_HARIAN} ${b.SATUAN_BELI}` : "—"}
                   </td>
                   <td style={{ ...S.td }}>
                     {b.HARI_TAHAN !== null ? (
-                      <span style={{ color: b.HARI_TAHAN < 1 ? "#ef4444" : b.HARI_TAHAN < 2 ? "#f59e0b" : "#22c55e", fontWeight: 700 }}>
+                      <span style={{ color: b.HARI_TAHAN < 1 ? "#d1685c" : b.HARI_TAHAN < 2 ? "#d99a4e" : "#7fa86a", fontWeight: 700 }}>
                         {b.HARI_TAHAN.toFixed(1)} hari
                       </span>
-                    ) : <span style={{ color: "#334155" }}>—</span>}
+                    ) : <span style={{ color: "#615d55" }}>—</span>}
                   </td>
-                  <td style={{ ...S.td, fontFamily: "monospace", color: "#e2e8f0" }}>
+                  <td style={{ ...S.td, fontFamily: "monospace", color: "#ecebe5" }}>
                     {idr(b.NILAI_STOK)}
                   </td>
                   <td style={S.td}>
@@ -286,7 +286,7 @@ export default function InventoryManager() {
           </tbody>
         </table>
         {filtered.length === 0 && (
-          <div style={{ padding: 32, textAlign: "center", color: "#334155", fontSize: 13 }}>
+          <div style={{ padding: 32, textAlign: "center", color: "#615d55", fontSize: 13 }}>
             Tidak ada data yang sesuai filter
           </div>
         )}
@@ -302,14 +302,14 @@ export default function InventoryManager() {
             .map(b => {
               const maxHari = 7;
               const width = Math.min(((b.HARI_TAHAN ?? 0) / maxHari) * 100, 100);
-              const color = (b.HARI_TAHAN ?? 0) < 1 ? "#ef4444" : (b.HARI_TAHAN ?? 0) < 2 ? "#f59e0b" : "#22c55e";
+              const color = (b.HARI_TAHAN ?? 0) < 1 ? "#d1685c" : (b.HARI_TAHAN ?? 0) < 2 ? "#d99a4e" : "#7fa86a";
               return (
                 <div key={b.ID_BAHAN}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                    <span style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 500 }}>{b.NAMA_BAHAN}</span>
+                    <span style={{ fontSize: 13, color: "#ecebe5", fontWeight: 500 }}>{b.NAMA_BAHAN}</span>
                     <span style={{ fontSize: 12, color, fontWeight: 700 }}>{b.HARI_TAHAN?.toFixed(1)} hari</span>
                   </div>
-                  <div style={{ height: 5, background: "#1e2840", borderRadius: 99, overflow: "hidden" }}>
+                  <div style={{ height: 5, background: "#3a3834", borderRadius: 99, overflow: "hidden" }}>
                     <div style={{ height: "100%", width: `${width}%`, background: color, borderRadius: 99, transition: "width 0.5s ease" }} />
                   </div>
                 </div>

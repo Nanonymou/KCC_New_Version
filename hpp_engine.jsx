@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "./AuthContext";
 import {
   INITIAL_BAHAN,
+  PRODUK,
   SIMULASI_SKENARIO,
   fetchBahan,
   fetchProduk,
@@ -135,24 +136,24 @@ export default function HPPEngine() {
     navBtn: (active) => ({
       padding: "10px 14px",
       fontSize: 13, fontWeight: active ? 600 : 400,
-      color: active ? "#f97316" : "#64748b",
+      color: active ? "#c96442" : "#8a857b",
       background: "none", border: "none", cursor: "pointer",
-      borderBottom: active ? "2px solid #f97316" : "2px solid transparent",
+      borderBottom: active ? "2px solid #c96442" : "2px solid transparent",
       transition: "all 0.15s", whiteSpace: "nowrap",
     }),
     grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
     grid3: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 },
     grid4: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 },
     card: {
-      background: "#1a1d2e", border: "1px solid #1e2840", borderRadius: 12,
+      background: "#2b2926", border: "1px solid #3a3834", borderRadius: 12,
       padding: 20,
     },
-    cardTitle: { fontSize: 12, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 },
-    bigNum: { fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em", color: "#f1f5f9" },
-    sub: { fontSize: 12, color: "#475569", marginTop: 4 },
+    cardTitle: { fontSize: 12, color: "#8a857b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 },
+    bigNum: { fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em", color: "#ecebe5" },
+    sub: { fontSize: 12, color: "#78746b", marginTop: 4 },
     table: { width: "100%", borderCollapse: "collapse" },
-    th: { padding: "10px 12px", textAlign: "left", fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #1e2840" },
-    td: { padding: "11px 12px", fontSize: 13, borderBottom: "1px solid #1a1d2e", verticalAlign: "middle" },
+    th: { padding: "10px 12px", textAlign: "left", fontSize: 11, color: "#78746b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #3a3834" },
+    td: { padding: "11px 12px", fontSize: 13, borderBottom: "1px solid #2b2926", verticalAlign: "middle" },
     badge: (color) => ({
       display: "inline-block", padding: "2px 8px", borderRadius: 20,
       fontSize: 11, fontWeight: 700, color,
@@ -160,40 +161,40 @@ export default function HPPEngine() {
     }),
     btn: (variant = "primary") => ({
       padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
-      cursor: "pointer", border: "none", transition: "all 0.15s",
-      background: variant === "primary" ? "#f97316"
-                : variant === "success" ? "#22c55e"
+      cursor: "pointer", transition: "all 0.15s",
+      background: variant === "primary" ? "#c96442"
+                : variant === "success" ? "#7fa86a"
                 : variant === "ghost"   ? "transparent"
-                : "#1e2840",
-      color: variant === "ghost" ? "#64748b" : "#fff",
-      border: variant === "ghost" ? "1px solid #1e2840" : "none",
+                : "#3a3834",
+      color: variant === "ghost" ? "#8a857b" : "#fff",
+      border: variant === "ghost" ? "1px solid #3a3834" : "none",
     }),
     logItem: (tipe) => ({
       display: "flex", gap: 10, alignItems: "flex-start",
       padding: "7px 12px", borderRadius: 6, marginBottom: 4,
-      background: tipe === "naik" ? "rgba(239,68,68,0.07)"
-                : tipe === "turun" ? "rgba(34,197,94,0.07)"
-                : tipe === "sim"  ? "rgba(99,102,241,0.07)"
-                : tipe === "apply"? "rgba(249,115,22,0.10)"
+      background: tipe === "naik" ? "rgba(209,104,92,0.07)"
+                : tipe === "turun" ? "rgba(127,168,106,0.07)"
+                : tipe === "sim"  ? "rgba(169,139,191,0.07)"
+                : tipe === "apply"? "rgba(201,100,66,0.10)"
                 : "rgba(255,255,255,0.03)",
       border: `1px solid ${
-        tipe === "naik" ? "rgba(239,68,68,0.15)"
-        : tipe === "turun" ? "rgba(34,197,94,0.15)"
-        : tipe === "sim"  ? "rgba(99,102,241,0.15)"
-        : tipe === "apply"? "rgba(249,115,22,0.2)"
+        tipe === "naik" ? "rgba(209,104,92,0.15)"
+        : tipe === "turun" ? "rgba(127,168,106,0.15)"
+        : tipe === "sim"  ? "rgba(169,139,191,0.15)"
+        : tipe === "apply"? "rgba(201,100,66,0.2)"
         : "rgba(255,255,255,0.05)"
       }`,
     }),
     simCard: (aktif) => ({
-      background: aktif ? "rgba(249,115,22,0.08)" : "#1a1d2e",
-      border: `1px solid ${aktif ? "#f97316" : "#1e2840"}`,
+      background: aktif ? "rgba(201,100,66,0.08)" : "#2b2926",
+      border: `1px solid ${aktif ? "#c96442" : "#3a3834"}`,
       borderRadius: 12, padding: 16, cursor: "pointer",
       transition: "all 0.2s",
     }),
     input: {
-      background: "#0f1117", border: "1px solid #334155",
+      background: "#1f1e1c", border: "1px solid #615d55",
       borderRadius: 6, padding: "5px 8px",
-      color: "#f1f5f9", fontSize: 13, width: 100,
+      color: "#ecebe5", fontSize: 13, width: 100,
       outline: "none",
     },
   };
@@ -207,8 +208,8 @@ export default function HPPEngine() {
       <style>{`
         @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
         @keyframes slide-in { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
-        .hover-row:hover { background: rgba(249,115,22,0.04) !important; }
-        .sim-card:hover { border-color: #f97316 !important; background: rgba(249,115,22,0.06) !important; }
+        .hover-row:hover { background: rgba(201,100,66,0.04) !important; }
+        .sim-card:hover { border-color: #c96442 !important; background: rgba(201,100,66,0.06) !important; }
         .btn-hover:hover { opacity: 0.85; }
         .margin-bar { height: 4px; border-radius: 2px; transition: width 0.6s ease; }
       `}</style>
@@ -222,14 +223,14 @@ export default function HPPEngine() {
         </div>
         <div style={S.card}>
           <div style={S.cardTitle}>Produk Kritis</div>
-          <div style={{ ...S.bigNum, color: produkKritis.length > 0 ? "#ef4444" : "#22c55e" }}>
+          <div style={{ ...S.bigNum, color: produkKritis.length > 0 ? "#d1685c" : "#7fa86a" }}>
             {produkKritis.length}
           </div>
           <div style={S.sub}>margin &lt; 20%</div>
         </div>
         <div style={S.card}>
           <div style={S.cardTitle}>Produk Sehat</div>
-          <div style={{ ...S.bigNum, color: "#22c55e" }}>{produkSehat.length}</div>
+          <div style={{ ...S.bigNum, color: "#7fa86a" }}>{produkSehat.length}</div>
           <div style={S.sub}>margin ≥ 50%</div>
         </div>
         <div style={S.card}>
@@ -262,9 +263,9 @@ export default function HPPEngine() {
                 >
                   <td style={S.td}>
                     <div style={{ fontWeight: 600, fontSize: 13 }}>{p.NAMA_PRODUK}</div>
-                    <div style={{ fontSize: 11, color: "#475569" }}>{p.KATEGORI}</div>
+                    <div style={{ fontSize: 11, color: "#78746b" }}>{p.KATEGORI}</div>
                   </td>
-                  <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", color: "#94a3b8" }}>
+                  <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", color: "#a9a49a" }}>
                     {idr(p.HPP_PER_PCS)}
                   </td>
                   <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace" }}>
@@ -283,21 +284,21 @@ export default function HPPEngine() {
         <div style={S.card}>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Activity Log</div>
           {log.length === 0 ? (
-            <div style={{ color: "#334155", fontSize: 13, textAlign: "center", padding: "32px 0" }}>
+            <div style={{ color: "#615d55", fontSize: 13, textAlign: "center", padding: "32px 0" }}>
               Engine siap. Ubah harga bahan untuk memulai.
             </div>
           ) : (
             <div style={{ maxHeight: 340, overflowY: "auto" }}>
               {log.map(l => (
                 <div key={l.id} style={{ ...S.logItem(l.tipe), animation: "slide-in 0.2s ease" }}>
-                  <span style={{ fontSize: 10, color: "#475569", minWidth: 56, paddingTop: 1 }}>{l.ts}</span>
+                  <span style={{ fontSize: 10, color: "#78746b", minWidth: 56, paddingTop: 1 }}>{l.ts}</span>
                   <span style={{
                     fontSize: 13, color:
-                      l.tipe === "naik"  ? "#fca5a5"
-                    : l.tipe === "turun" ? "#86efac"
-                    : l.tipe === "sim"   ? "#a5b4fc"
-                    : l.tipe === "apply" ? "#fdba74"
-                    : "#94a3b8"
+                      l.tipe === "naik"  ? "#e0a59f"
+                    : l.tipe === "turun" ? "#a9c46a"
+                    : l.tipe === "sim"   ? "#b4b0d4"
+                    : l.tipe === "apply" ? "#e0a08a"
+                    : "#a9a49a"
                   }}>{l.pesan}</span>
                 </div>
               ))}
@@ -334,11 +335,11 @@ export default function HPPEngine() {
               <tr key={b.ID_BAHAN} className="hover-row">
                 <td style={S.td}>
                   <span style={{ fontWeight: 600 }}>{b.NAMA_BAHAN}</span>
-                  {isChanged && <span style={{ ...S.badge("#f97316"), marginLeft: 8 }}>✎</span>}
+                  {isChanged && <span style={{ ...S.badge("#c96442"), marginLeft: 8 }}>✎</span>}
                 </td>
                 <td style={S.td}>{b.SATUAN_BELI}</td>
                 <td style={S.td}>{b.SATUAN_PAKAI}</td>
-                <td style={{ ...S.td, color: "#475569" }}>1:{b.KONVERSI}</td>
+                <td style={{ ...S.td, color: "#78746b" }}>1:{b.KONVERSI}</td>
                 <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace" }}>
                   {isEditing ? (
                     <input
@@ -355,12 +356,12 @@ export default function HPPEngine() {
                       }}
                     />
                   ) : (
-                    <span style={{ color: isChanged ? "#fb923c" : "#94a3b8" }}>
+                    <span style={{ color: isChanged ? "#d97757" : "#a9a49a" }}>
                       {idr(b.HARGA_RATA2)}
                     </span>
                   )}
                 </td>
-                <td style={{ ...S.td, textAlign: "right", color: "#475569", fontFamily: "monospace" }}>
+                <td style={{ ...S.td, textAlign: "right", color: "#78746b", fontFamily: "monospace" }}>
                   {idr(hargaPerPakai)}/{b.SATUAN_PAKAI}
                 </td>
                 <td style={{ ...S.td, textAlign: "center" }}>
@@ -396,7 +397,7 @@ export default function HPPEngine() {
 
   const TabDetail = () => {
     if (!selectedDetail) return (
-      <div style={{ ...S.card, textAlign: "center", padding: "40px 0", color: "#334155" }}>
+      <div style={{ ...S.card, textAlign: "center", padding: "40px 0", color: "#615d55" }}>
         Pilih produk dari tab Dashboard untuk melihat detail HPP.
       </div>
     );
@@ -452,10 +453,10 @@ export default function HPPEngine() {
                 return (
                   <tr key={d.ID_BAHAN} className="hover-row">
                     <td style={S.td}>{d.NAMA_BAHAN}</td>
-                    <td style={{ ...S.td, textAlign: "right", color: "#64748b" }}>
+                    <td style={{ ...S.td, textAlign: "right", color: "#8a857b" }}>
                       {d.JUMLAH} {d.SATUAN_PAKAI}
                     </td>
-                    <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", color: "#64748b" }}>
+                    <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", color: "#8a857b" }}>
                       {idr(d.HARGA_PER_SATUAN_PAKAI)}/{d.SATUAN_PAKAI}
                     </td>
                     <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", fontWeight: 600 }}>
@@ -463,10 +464,10 @@ export default function HPPEngine() {
                     </td>
                     <td style={{ ...S.td, textAlign: "right" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
-                        <div style={{ width: 60, background: "#1e2840", borderRadius: 2, overflow: "hidden" }}>
-                          <div className="margin-bar" style={{ width: `${pct_hpp}%`, background: "#f97316" }} />
+                        <div style={{ width: 60, background: "#3a3834", borderRadius: 2, overflow: "hidden" }}>
+                          <div className="margin-bar" style={{ width: `${pct_hpp}%`, background: "#c96442" }} />
                         </div>
-                        <span style={{ color: "#94a3b8", fontSize: 12 }}>{pct_hpp}%</span>
+                        <span style={{ color: "#a9a49a", fontSize: 12 }}>{pct_hpp}%</span>
                       </div>
                     </td>
                   </tr>
@@ -475,8 +476,8 @@ export default function HPPEngine() {
             </tbody>
             <tfoot>
               <tr>
-                <td style={{ ...S.td, fontWeight: 700, color: "#f1f5f9" }} colSpan={3}>Total HPP (1 batch)</td>
-                <td style={{ ...S.td, textAlign: "right", fontWeight: 800, color: "#f97316", fontFamily: "monospace" }}>
+                <td style={{ ...S.td, fontWeight: 700, color: "#ecebe5" }} colSpan={3}>Total HPP (1 batch)</td>
+                <td style={{ ...S.td, textAlign: "right", fontWeight: 800, color: "#c96442", fontFamily: "monospace" }}>
                   {idr(p.HPP_PER_BATCH)}
                 </td>
                 <td style={S.td} />
@@ -490,8 +491,8 @@ export default function HPPEngine() {
 
   const TabSimulasi = () => (
     <div>
-      <div style={{ ...S.card, marginBottom: 20, borderColor: "#1e3a5f", background: "rgba(30,58,95,0.3)" }}>
-        <div style={{ fontSize: 13, color: "#7dd3fc" }}>
+      <div style={{ ...S.card, marginBottom: 20, borderColor: "#413f3a", background: "rgba(65,63,58,0.3)" }}>
+        <div style={{ fontSize: 13, color: "#9fc4d4" }}>
           💡 Simulasi tidak mengubah data aktual. Setelah puas, klik <b>Terapkan</b> untuk menyimpan.
         </div>
       </div>
@@ -504,8 +505,8 @@ export default function HPPEngine() {
             onClick={() => jalankanSimulasi(s)}
           >
             <div style={{ fontSize: 24, marginBottom: 6 }}>{s.icon}</div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9", marginBottom: 4 }}>{s.label}</div>
-            <div style={{ fontSize: 11, color: "#64748b" }}>{s.desc}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#ecebe5", marginBottom: 4 }}>{s.label}</div>
+            <div style={{ fontSize: 11, color: "#8a857b" }}>{s.desc}</div>
           </div>
         ))}
       </div>
@@ -548,7 +549,7 @@ export default function HPPEngine() {
                   return (
                     <tr key={sim.ID_PRODUK} className="hover-row">
                       <td style={S.td}><span style={{ fontWeight: 600 }}>{sim.NAMA_PRODUK}</span></td>
-                      <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", color: "#64748b" }}>
+                      <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", color: "#8a857b" }}>
                         {idr(aktual?.HPP_PER_PCS || 0)}
                       </td>
                       <td style={{ ...S.td, textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>
@@ -556,14 +557,14 @@ export default function HPPEngine() {
                       </td>
                       <td style={{ ...S.td, textAlign: "right" }}>
                         {selisih !== 0 && (
-                          <span style={{ color: selisih > 0 ? "#fca5a5" : "#86efac", fontFamily: "monospace" }}>
+                          <span style={{ color: selisih > 0 ? "#e0a59f" : "#a9c46a", fontFamily: "monospace" }}>
                             {selisih > 0 ? "+" : ""}{idr(selisih)}
                             <span style={{ fontSize: 11, marginLeft: 4 }}>
                               ({selisih > 0 ? "+" : ""}{pctNaik}%)
                             </span>
                           </span>
                         )}
-                        {selisih === 0 && <span style={{ color: "#475569" }}>—</span>}
+                        {selisih === 0 && <span style={{ color: "#78746b" }}>—</span>}
                       </td>
                       <td style={{ ...S.td, textAlign: "right" }}>
                         <span style={S.badge(marginColor(aktual?.MARGIN_PCT || 0))}>
@@ -577,10 +578,10 @@ export default function HPPEngine() {
                       </td>
                       <td style={{ ...S.td, textAlign: "right" }}>
                         {sim.MARGIN_PCT < 20
-                          ? <span style={S.badge("#ef4444")}>⚠ Kritis</span>
+                          ? <span style={S.badge("#d1685c")}>⚠ Kritis</span>
                           : sim.MARGIN_PCT < 35
-                          ? <span style={S.badge("#f59e0b")}>Waspada</span>
-                          : <span style={S.badge("#22c55e")}>Aman</span>
+                          ? <span style={S.badge("#d99a4e")}>Waspada</span>
+                          : <span style={S.badge("#7fa86a")}>Aman</span>
                         }
                       </td>
                     </tr>
@@ -593,7 +594,7 @@ export default function HPPEngine() {
       )}
 
       {!simHPP && (
-        <div style={{ ...S.card, textAlign: "center", padding: "48px 0", color: "#334155" }}>
+        <div style={{ ...S.card, textAlign: "center", padding: "48px 0", color: "#615d55" }}>
           Pilih skenario di atas untuk memulai simulasi.
         </div>
       )}
@@ -608,15 +609,15 @@ export default function HPPEngine() {
       <style>{`
         @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
         @keyframes slide-in  { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
-        .hover-row:hover { background: rgba(249,115,22,0.04) !important; cursor: pointer; }
-        .sim-card:hover  { border-color: #f97316 !important; background: rgba(249,115,22,0.06) !important; }
+        .hover-row:hover { background: rgba(201,100,66,0.04) !important; cursor: pointer; }
+        .sim-card:hover  { border-color: #c96442 !important; background: rgba(201,100,66,0.06) !important; }
         .btn-hover:hover { opacity: 0.85; }
         .margin-bar      { height: 4px; border-radius: 2px; transition: width 0.6s ease; }
-        select option    { background: #1a1d2e; color: #f1f5f9; }
+        select option    { background: #2b2926; color: #ecebe5; }
       `}</style>
 
       {/* Sub-nav khusus HPP Engine */}
-      <div style={{ display: "flex", gap: 4, padding: "8px 0 16px", borderBottom: "1px solid #1e2840", marginBottom: 20, overflowX: "auto" }}>
+      <div style={{ display: "flex", gap: 4, padding: "8px 0 16px", borderBottom: "1px solid #3a3834", marginBottom: 20, overflowX: "auto" }}>
         {[
           { key: "dashboard", label: "Overview" },
           { key: "hpp",       label: "Harga Bahan" },
@@ -628,9 +629,9 @@ export default function HPPEngine() {
           </button>
         ))}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6,
-          background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.25)",
-          borderRadius: 20, padding: "4px 10px", fontSize: 11, color: "#4ade80", fontWeight: 600, whiteSpace: "nowrap" }}>
-          <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", animation: "pulse-dot 1.5s infinite" }} />
+          background: "rgba(127,168,106,0.1)", border: "1px solid rgba(127,168,106,0.25)",
+          borderRadius: 20, padding: "4px 10px", fontSize: 11, color: "#8fb47a", fontWeight: 600, whiteSpace: "nowrap" }}>
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#7fa86a", animation: "pulse-dot 1.5s infinite" }} />
           Engine Aktif
         </div>
       </div>
