@@ -56,15 +56,28 @@ Aplikasi manajemen dapur: master data, **HPP & Margin**, **Resep**, **Inventory*
 3. **Deploy**. Saat request pertama, tabel dibuat & di-seed otomatis.
 4. **Login** dengan kredensial demo di bawah, lalu ganti password di produksi.
 
-### Kredensial demo (seed)
+### Kredensial demo (seed) — 10 site
+
+Seed otomatis membuat **10 outlet** (`OUTLET01` … `OUTLET10`), masing-masing
+dengan data master lengkap dan dua akun:
 
 | Outlet | Username | Password | Role |
 |---|---|---|---|
-| `OUTLET01` | `admin` | `admin123` | SUPER_ADMIN |
-| `OUTLET01` | `kasir` | `kasir123` | KASIR |
+| `OUTLET01`–`OUTLET10` | `admin` | `admin123` | SUPER_ADMIN (OUTLET01) / ADMIN |
+| `OUTLET01`–`OUTLET10` | `kasir` | `kasir123` | KASIR |
+
+Setiap outlet terisolasi penuh (semua tabel di-scope `outlet_id`), sesi login
+independen per user, dan penomoran PO memakai counter atomik per outlet — aman
+dipakai beberapa akun bersamaan hingga 10 site.
 
 > ⚠️ **Ganti kredensial ini sebelum produksi** (edit `api/_lib/seed.js` sebelum
 > deploy pertama, atau update baris di tabel `users`).
+
+### Mode Demo (tanpa database)
+
+Jika database belum di-attach (`POSTGRES_URL` kosong), halaman login mendeteksi
+server offline dan menampilkan tombol **"Masuk Mode Demo"** — seluruh aplikasi
+dapat dijelajahi dengan data contoh sepenuhnya di sisi client, tanpa backend.
 
 ## Pengembangan lokal
 

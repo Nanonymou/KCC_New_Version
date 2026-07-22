@@ -14,7 +14,7 @@
 
 import { sql, db } from '@vercel/postgres';
 import crypto from 'node:crypto';
-import { SEED } from './seed.js';
+import { SEED, OUTLETS, USER_TEMPLATE } from './seed.js';
 
 // Advisory-lock key that serializes provisioning across concurrent cold starts.
 const PROVISION_LOCK = 727274;
@@ -188,67 +188,99 @@ async function createSchema() {
   );`;
 }
 
-// ─── Seeding (only if the default outlet does not yet exist) ─────────────────
+// ─── Seeding (only if the first outlet does not yet exist) ───────────────────
+//
+// All 10 outlets are seeded with one batched multi-row INSERT per table, so
+// first-request provisioning stays a handful of round trips instead of ~900.
+// Runs under the provisioning advisory lock, so it cannot interleave with a
+// concurrent cold start.
+
+async function batchInsert(table, cols, rows, conflictClause = '') {
+  if (rows.length === 0) return;
+  const params = [];
+  const values = rows
+    .map((row) => `(${row.map((v) => { params.push(v); return `$${params.length}`; }).join(',')})`)
+    .join(',');
+  await sql.query(
+    `INSERT INTO ${table} (${cols.join(',')}) VALUES ${values} ${conflictClause};`,
+    params,
+  );
+}
 
 async function seedIfEmpty() {
-  const { rows } = await sql`SELECT 1 FROM outlets WHERE id = ${SEED.outlet.id} LIMIT 1;`;
+  const { rows } = await sql`SELECT 1 FROM outlets WHERE id = ${OUTLETS[0].id} LIMIT 1;`;
   if (rows.length > 0) return; // already seeded
 
-  const o = SEED.outlet;
-  await sql`INSERT INTO outlets (id, code, name, active)
-            VALUES (${o.id}, ${o.code}, ${o.name}, TRUE)
-            ON CONFLICT (id) DO NOTHING;`;
+  const today = new Date().toISOString().slice(0, 10);
 
-  for (const u of SEED.users) {
-    const { salt, hash } = hashPassword(u.password);
-    await sql`INSERT INTO users (id, outlet_id, username, password_hash, salt, role, active)
-              VALUES (${u.id}, ${o.id}, ${u.username}, ${hash}, ${salt}, ${u.role}, TRUE)
-              ON CONFLICT (id) DO NOTHING;`;
-  }
+  await batchInsert(
+    'outlets', ['id', 'code', 'name', 'active'],
+    OUTLETS.map((o) => [o.id, o.code, o.name, true]),
+    'ON CONFLICT (id) DO NOTHING',
+  );
 
-  for (const b of SEED.bahan) {
-    await sql`INSERT INTO bahan (id, outlet_id, nama, satuan_beli, satuan_pakai, konversi, harga_rata2, harga_sebelumnya, active)
-              VALUES (${b.ID_BAHAN}, ${o.id}, ${b.NAMA_BAHAN}, ${b.SATUAN_BELI}, ${b.SATUAN_PAKAI}, ${b.KONVERSI}, ${b.HARGA_RATA2}, ${b.HARGA_SEBELUMNYA}, TRUE)
-              ON CONFLICT (outlet_id, id) DO NOTHING;`;
-  }
+  const userRows = [];
+  OUTLETS.forEach((o, i) => {
+    for (const t of USER_TEMPLATE) {
+      const { salt, hash } = hashPassword(t.password);
+      const role = i === 0 && t.roleFirst ? t.roleFirst : t.role;
+      userRows.push([`U${o.id.slice(3)}${t.key}`, o.id, t.username, hash, salt, role, true]);
+    }
+  });
+  await batchInsert(
+    'users', ['id', 'outlet_id', 'username', 'password_hash', 'salt', 'role', 'active'],
+    userRows, 'ON CONFLICT (id) DO NOTHING',
+  );
 
-  for (const p of SEED.produk) {
-    await sql`INSERT INTO produk (id, outlet_id, nama, kategori, harga_jual, yield_pcs, active)
-              VALUES (${p.ID_PRODUK}, ${o.id}, ${p.NAMA_PRODUK}, ${p.KATEGORI}, ${p.HARGA_JUAL}, ${p.YIELD_PCS}, TRUE)
-              ON CONFLICT (outlet_id, id) DO NOTHING;`;
-  }
+  await batchInsert(
+    'bahan', ['id', 'outlet_id', 'nama', 'satuan_beli', 'satuan_pakai', 'konversi', 'harga_rata2', 'harga_sebelumnya', 'active'],
+    OUTLETS.flatMap((o) => SEED.bahan.map((b) =>
+      [b.ID_BAHAN, o.id, b.NAMA_BAHAN, b.SATUAN_BELI, b.SATUAN_PAKAI, b.KONVERSI, b.HARGA_RATA2, b.HARGA_SEBELUMNYA, true])),
+    'ON CONFLICT (outlet_id, id) DO NOTHING',
+  );
 
-  for (const r of SEED.resep) {
-    await sql`INSERT INTO resep (outlet_id, id_produk, id_bahan, jumlah)
-              VALUES (${o.id}, ${r.ID_PRODUK}, ${r.ID_BAHAN}, ${r.JUMLAH});`;
-  }
+  await batchInsert(
+    'produk', ['id', 'outlet_id', 'nama', 'kategori', 'harga_jual', 'yield_pcs', 'active'],
+    OUTLETS.flatMap((o) => SEED.produk.map((p) =>
+      [p.ID_PRODUK, o.id, p.NAMA_PRODUK, p.KATEGORI, p.HARGA_JUAL, p.YIELD_PCS, true])),
+    'ON CONFLICT (outlet_id, id) DO NOTHING',
+  );
 
-  for (const s of SEED.supplier) {
-    await sql`INSERT INTO supplier (id, outlet_id, nama, id_bahan, harga, satuan, lead_time, rating, telp, active)
-              VALUES (${s.ID_SUPPLIER}, ${o.id}, ${s.NAMA}, ${s.ID_BAHAN}, ${s.HARGA}, ${s.SATUAN}, ${s.LEAD_TIME}, ${s.RATING}, ${s.TELP}, TRUE)
-              ON CONFLICT (outlet_id, id) DO NOTHING;`;
-  }
+  await batchInsert(
+    'resep', ['outlet_id', 'id_produk', 'id_bahan', 'jumlah'],
+    OUTLETS.flatMap((o) => SEED.resep.map((r) => [o.id, r.ID_PRODUK, r.ID_BAHAN, r.JUMLAH])),
+  );
 
-  for (const p of SEED.pembelian) {
-    await sql`INSERT INTO pembelian (id_po, outlet_id, tanggal, id_bahan, id_supplier, qty, harga_beli, total, status)
-              VALUES (${p.ID_PO}, ${o.id}, ${p.TANGGAL}, ${p.ID_BAHAN}, ${p.ID_SUPPLIER}, ${p.QTY}, ${p.HARGA_BELI}, ${p.TOTAL}, ${p.STATUS})
-              ON CONFLICT (outlet_id, id_po) DO NOTHING;`;
-  }
+  await batchInsert(
+    'supplier', ['id', 'outlet_id', 'nama', 'id_bahan', 'harga', 'satuan', 'lead_time', 'rating', 'telp', 'active'],
+    OUTLETS.flatMap((o) => SEED.supplier.map((s) =>
+      [s.ID_SUPPLIER, o.id, s.NAMA, s.ID_BAHAN, s.HARGA, s.SATUAN, s.LEAD_TIME, s.RATING, s.TELP, true])),
+    'ON CONFLICT (outlet_id, id) DO NOTHING',
+  );
 
-  for (const s of SEED.stok) {
-    await sql`INSERT INTO stok (outlet_id, id_bahan, stok, min_stok)
-              VALUES (${o.id}, ${s.ID_BAHAN}, ${s.STOK}, ${s.MIN_STOK})
-              ON CONFLICT (outlet_id, id_bahan) DO NOTHING;`;
-  }
+  await batchInsert(
+    'pembelian', ['id_po', 'outlet_id', 'tanggal', 'id_bahan', 'id_supplier', 'qty', 'harga_beli', 'total', 'status'],
+    OUTLETS.flatMap((o) => SEED.pembelian.map((p) =>
+      [p.ID_PO, o.id, p.TANGGAL, p.ID_BAHAN, p.ID_SUPPLIER, p.QTY, p.HARGA_BELI, p.TOTAL, p.STATUS])),
+    'ON CONFLICT (outlet_id, id_po) DO NOTHING',
+  );
 
-  for (const j of SEED.penjualan) {
-    await sql`INSERT INTO penjualan (outlet_id, id_produk, qty, tanggal)
-              VALUES (${o.id}, ${j.ID_PRODUK}, ${j.QTY}, CURRENT_DATE);`;
-  }
+  await batchInsert(
+    'stok', ['outlet_id', 'id_bahan', 'stok', 'min_stok'],
+    OUTLETS.flatMap((o) => SEED.stok.map((s) => [o.id, s.ID_BAHAN, s.STOK, s.MIN_STOK])),
+    'ON CONFLICT (outlet_id, id_bahan) DO NOTHING',
+  );
 
-  // Seed the PO counter past the highest seeded id (PO0..N) so generated
+  await batchInsert(
+    'penjualan', ['outlet_id', 'id_produk', 'qty', 'tanggal'],
+    OUTLETS.flatMap((o) => SEED.penjualan.map((j) => [o.id, j.ID_PRODUK, j.QTY, today])),
+  );
+
+  // Seed each outlet's PO counter past the highest seeded id so generated
   // purchase orders never collide with seed rows.
-  await sql`INSERT INTO counters (outlet_id, name, value)
-            VALUES (${o.id}, 'pembelian', ${SEED.pembelian.length})
-            ON CONFLICT (outlet_id, name) DO NOTHING;`;
+  await batchInsert(
+    'counters', ['outlet_id', 'name', 'value'],
+    OUTLETS.map((o) => [o.id, 'pembelian', SEED.pembelian.length]),
+    'ON CONFLICT (outlet_id, name) DO NOTHING',
+  );
 }

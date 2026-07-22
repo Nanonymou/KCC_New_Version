@@ -191,7 +191,7 @@ function AlertRow({ icon, label, value, sub, accent = T.danger }) {
 // MAIN DASHBOARD
 // ─────────────────────────────────────────────────────────────
 export default function KCCDashboard() {
-  const { token } = useAuth();
+  const { token, isDemo } = useAuth();
 
   const [bahan,     setBahan]     = useState(INITIAL_BAHAN);
   const [stokBahan, setStokBahan] = useState(STOK_BAHAN);
@@ -201,6 +201,8 @@ export default function KCCDashboard() {
 
   useEffect(() => {
     if (!token) return;
+    // Demo mode is fully client-side — skip network fetches entirely.
+    if (isDemo) { setStatus("demo"); return; }
     setStatus("loading");
     Promise.all([
       fetchBahan(token),
@@ -214,7 +216,7 @@ export default function KCCDashboard() {
       // when the core datasets actually arrived from the backend.
       setStatus(bahanData && stokData ? "ready" : "error");
     }).catch(() => setStatus("error"));
-  }, [token]);
+  }, [token, isDemo]);
 
   const data = useMemo(() => getDashboardData(bahan, stokBahan, penjualan), [bahan, stokBahan, penjualan]);
 
@@ -236,6 +238,8 @@ export default function KCCDashboard() {
         .mid-grid  { grid-template-columns: 1fr 1fr 1fr; }
         .bot-grid  { grid-template-columns: 1fr 1fr; }
         .card-ani  { animation: fadein 0.4s ease both; }
+        .kpi-grid .card-ani { transition: transform .2s ease; }
+        .kpi-grid .card-ani:hover { transform: translateY(-3px); }
         @media (max-width: 1024px) {
           .kpi-grid { grid-template-columns: repeat(3, 1fr); }
           .mid-grid { grid-template-columns: 1fr 1fr; }
@@ -267,6 +271,7 @@ export default function KCCDashboard() {
               animation: status === "loading" ? "pulse 1.2s infinite" : "none",
             }} />
             {status === "ready" ? "Data langsung dari database"
+              : status === "demo" ? "Mode demo — data contoh"
               : status === "error" ? "Gagal memuat data — menampilkan contoh"
               : "Memuat data…"}
           </div>

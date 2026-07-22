@@ -3,19 +3,34 @@
 // Initial data used to provision a fresh database (mirrors the constants that
 // used to live in kcc_data_layer.jsx as offline fallback).
 //
+// Multi-site: 10 outlets are provisioned (OUTLET01..OUTLET10), each with its
+// own admin & kasir account and a full copy of the template master data, so
+// the app can serve up to 10 independent sites out of the box.
+//
 // Default credentials (CHANGE IN PRODUCTION):
-//   Outlet code : OUTLET01
-//   Username    : admin      Password: admin123     (SUPER_ADMIN)
-//   Username    : kasir      Password: kasir123      (KASIR)
+//   Outlet code : OUTLET01 .. OUTLET10
+//   Username    : admin   Password: admin123   (SUPER_ADMIN di OUTLET01, ADMIN di lainnya)
+//   Username    : kasir   Password: kasir123   (KASIR)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const SEED = {
-  outlet: { id: 'OUT01', code: 'OUTLET01', name: 'KCC Pusat' },
+export const NUM_OUTLETS = 10;
 
-  users: [
-    { id: 'U001', username: 'admin', password: 'admin123', role: 'SUPER_ADMIN' },
-    { id: 'U002', username: 'kasir', password: 'kasir123', role: 'KASIR' },
-  ],
+export const OUTLETS = Array.from({ length: NUM_OUTLETS }, (_, i) => {
+  const n = String(i + 1).padStart(2, '0');
+  return {
+    id:   `OUT${n}`,
+    code: `OUTLET${n}`,
+    name: i === 0 ? 'KCC Pusat' : `KCC Site ${i + 1}`,
+  };
+});
+
+// Two accounts per outlet; the first outlet's admin is the SUPER_ADMIN.
+export const USER_TEMPLATE = [
+  { key: 'A', username: 'admin', password: 'admin123', roleFirst: 'SUPER_ADMIN', role: 'ADMIN' },
+  { key: 'K', username: 'kasir', password: 'kasir123', role: 'KASIR' },
+];
+
+export const SEED = {
 
   bahan: [
     { ID_BAHAN: 'B001', NAMA_BAHAN: 'Ayam Potong',   SATUAN_BELI: 'kg',  SATUAN_PAKAI: 'gram', KONVERSI: 1000, HARGA_RATA2: 38000, HARGA_SEBELUMNYA: 34000 },

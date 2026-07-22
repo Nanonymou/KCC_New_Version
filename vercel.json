@@ -5,7 +5,7 @@
   "outputDirectory": "dist",
   "functions": {
     "api/rpc.js": {
-      "maxDuration": 15
+      "maxDuration": 30
     }
   }
 }
