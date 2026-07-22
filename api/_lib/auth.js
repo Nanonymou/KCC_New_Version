@@ -116,3 +116,21 @@ export async function requireSession(params) {
   }
   return session;
 }
+
+// Role hierarchy (higher rank ⇒ more privilege).
+const ROLE_RANK = { VIEWER: 0, STAFF: 1, KASIR: 2, ADMIN: 3, SUPER_ADMIN: 4 };
+
+/**
+ * Authorization guard — throws FORBIDDEN unless the session's role meets the
+ * required minimum. Use after requireSession() on privileged handlers.
+ */
+export function requireRole(session, minRole) {
+  const have = ROLE_RANK[session?.role] ?? -1;
+  const need = ROLE_RANK[minRole] ?? 99;
+  if (have < need) {
+    const err = new Error('Anda tidak memiliki izin untuk melakukan tindakan ini.');
+    err.code = 'FORBIDDEN';
+    throw err;
+  }
+  return session;
+}

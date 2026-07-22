@@ -19,7 +19,7 @@ import { SEED } from './seed.js';
 // Advisory-lock key that serializes provisioning across concurrent cold starts.
 const PROVISION_LOCK = 727274;
 
-export { sql };
+export { sql, db };
 
 // ─── Password hashing (Node built-in scrypt — no external dependency) ───────
 
@@ -177,6 +177,15 @@ async function createSchema() {
     value       TEXT,
     PRIMARY KEY (outlet_id, key)
   );`;
+
+  // Per-outlet atomic counters (e.g. sequential PO numbers). Incremented
+  // inside a transaction so concurrent requests never collide.
+  await sql`CREATE TABLE IF NOT EXISTS counters (
+    outlet_id   TEXT NOT NULL REFERENCES outlets(id),
+    name        TEXT NOT NULL,
+    value       BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (outlet_id, name)
+  );`;
 }
 
 // ─── Seeding (only if the default outlet does not yet exist) ─────────────────
@@ -236,4 +245,10 @@ async function seedIfEmpty() {
     await sql`INSERT INTO penjualan (outlet_id, id_produk, qty, tanggal)
               VALUES (${o.id}, ${j.ID_PRODUK}, ${j.QTY}, CURRENT_DATE);`;
   }
+
+  // Seed the PO counter past the highest seeded id (PO0..N) so generated
+  // purchase orders never collide with seed rows.
+  await sql`INSERT INTO counters (outlet_id, name, value)
+            VALUES (${o.id}, 'pembelian', ${SEED.pembelian.length})
+            ON CONFLICT (outlet_id, name) DO NOTHING;`;
 }

@@ -11,8 +11,8 @@
 // Every data endpoint is scoped to the caller's outlet via requireSession().
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { sql } from './db.js';
-import { login, logout, validateSession, requireSession } from './auth.js';
+import { sql, db } from './db.js';
+import { login, logout, validateSession, requireSession, requireRole } from './auth.js';
 
 const num = (v) => (v === null || v === undefined ? 0 : Number(v));
 const ok = (data) => ({ success: true, data });
@@ -225,17 +225,39 @@ async function apiInvPurchaseCreate(p) {
   const b = p.data || p;
   const qty = num(b.QTY), harga = num(b.HARGA_BELI);
   const total = num(b.TOTAL) || qty * harga;
-  const id = b.ID_PO || (await nextId(s.outletId, 'pembelian', 'id_po', 'PO'));
-  await sql`INSERT INTO pembelian (id_po, outlet_id, tanggal, id_bahan, id_supplier, qty, harga_beli, total, status)
-            VALUES (${id}, ${s.outletId}, ${b.TANGGAL || new Date().toISOString().slice(0, 10)}, ${b.ID_BAHAN},
-                    ${b.ID_SUPPLIER}, ${qty}, ${harga}, ${total}, ${b.STATUS || 'Diterima'});`;
-  // If received, increase stock (moving-average not recomputed here — kept simple).
-  if ((b.STATUS || 'Diterima') === 'Diterima') {
-    await sql`INSERT INTO stok (outlet_id, id_bahan, stok, min_stok)
-              VALUES (${s.outletId}, ${b.ID_BAHAN}, ${qty}, 0)
-              ON CONFLICT (outlet_id, id_bahan) DO UPDATE SET stok = stok.stok + ${qty};`;
+  const status = b.STATUS || 'Diterima';
+  const tanggal = b.TANGGAL || new Date().toISOString().slice(0, 10);
+
+  // PO id allocation, the purchase insert, and the stock update run in one
+  // transaction with an atomic per-outlet counter, so concurrent requests can
+  // neither pick the same id_po nor leave a purchase committed without its
+  // matching stock change.
+  const client = await db.connect();
+  try {
+    await client.sql`BEGIN`;
+    let id = b.ID_PO;
+    if (!id) {
+      const { rows } = await client.sql`
+        INSERT INTO counters (outlet_id, name, value) VALUES (${s.outletId}, 'pembelian', 1)
+        ON CONFLICT (outlet_id, name) DO UPDATE SET value = counters.value + 1
+        RETURNING value;`;
+      id = `PO${String(rows[0].value).padStart(3, '0')}`;
+    }
+    await client.sql`INSERT INTO pembelian (id_po, outlet_id, tanggal, id_bahan, id_supplier, qty, harga_beli, total, status)
+              VALUES (${id}, ${s.outletId}, ${tanggal}, ${b.ID_BAHAN}, ${b.ID_SUPPLIER}, ${qty}, ${harga}, ${total}, ${status});`;
+    if (status === 'Diterima') {
+      await client.sql`INSERT INTO stok (outlet_id, id_bahan, stok, min_stok)
+                VALUES (${s.outletId}, ${b.ID_BAHAN}, ${qty}, 0)
+                ON CONFLICT (outlet_id, id_bahan) DO UPDATE SET stok = stok.stok + ${qty};`;
+    }
+    await client.sql`COMMIT`;
+    return ok({ ID_PO: id });
+  } catch (e) {
+    try { await client.sql`ROLLBACK`; } catch { /* ignore */ }
+    throw e;
+  } finally {
+    client.release();
   }
-  return ok({ ID_PO: id });
 }
 async function apiInvPurchaseVoid(p) {
   const s = await requireSession(p);
@@ -328,21 +350,35 @@ async function apiHealth() {
   return ok({ status: 'ok', db: 'connected', now: rows[0].now });
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async function nextId(outletId, table, col, prefix) {
-  const { rows } = await sql.query(
-    `SELECT ${col} AS v FROM ${table} WHERE outlet_id = $1 AND ${col} LIKE $2 ORDER BY ${col} DESC LIMIT 1;`,
-    [outletId, `${prefix}%`],
-  );
-  const last = rows[0]?.v;
-  const n = last ? parseInt(String(last).replace(/\D/g, ''), 10) + 1 : 1;
-  return `${prefix}${String(n).padStart(3, '0')}`;
-}
-
 // ─── Registry ────────────────────────────────────────────────────────────────
 
-export const HANDLERS = {
+// Minimum role required per privileged action. Anything not listed only needs
+// a valid session (enforced by requireSession inside the handler).
+const ROLE_REQUIRED = {
+  // master-data & recipe writes, purchase create/void, adjustment, config
+  apiBahanCreate: 'ADMIN', apiBahanUpdate: 'ADMIN', apiBahanDeactivate: 'ADMIN', apiBahanReactivate: 'ADMIN',
+  apiProdukCreate: 'ADMIN', apiProdukUpdate: 'ADMIN', apiProdukDeactivate: 'ADMIN', apiProdukReactivate: 'ADMIN',
+  apiSupplierCreate: 'ADMIN', apiSupplierUpdate: 'ADMIN', apiSupplierDeactivate: 'ADMIN', apiSupplierReactivate: 'ADMIN',
+  apiResepAddItem: 'ADMIN', apiResepUpdateItem: 'ADMIN', apiResepDeleteItem: 'ADMIN',
+  apiInvPurchaseCreate: 'ADMIN', apiInvPurchaseVoid: 'ADMIN', apiInvAdjustment: 'ADMIN',
+  apiSetAppConfig: 'ADMIN',
+  // cashier-level: recording sales
+  apiInvSalesCreate: 'KASIR',
+};
+
+// Wrap a handler so it enforces its minimum role (after authenticating the
+// session) before running. Reads and auth endpoints pass through unwrapped.
+function guard(name, fn) {
+  const minRole = ROLE_REQUIRED[name];
+  if (!minRole) return fn;
+  return async (p) => {
+    const s = await requireSession(p);
+    requireRole(s, minRole);
+    return fn(p);
+  };
+}
+
+const RAW_HANDLERS = {
   ...authHandlers,
   apiHealth,
   // reads
@@ -360,3 +396,8 @@ export const HANDLERS = {
   // config
   apiSetAppConfig,
 };
+
+// Apply per-action role guards (reads/auth pass through untouched).
+export const HANDLERS = Object.fromEntries(
+  Object.entries(RAW_HANDLERS).map(([name, fn]) => [name, guard(name, fn)]),
+);

@@ -66,7 +66,10 @@ export default async function handler(req, res) {
     return res.status(200).json(result);
   } catch (err) {
     const code = err.code || 'SERVER_ERROR';
-    const status = code === 'INVALID_SESSION' ? 401 : code === 'BAD_REQUEST' ? 400 : 500;
+    const status =
+      code === 'INVALID_SESSION' ? 401 :
+      code === 'FORBIDDEN' ? 403 :
+      code === 'BAD_REQUEST' ? 400 : 500;
     // Missing DB configuration is the most common deploy-time error — make it clear.
     const message =
       /connection string|POSTGRES_URL|ECONNREFUSED|getaddrinfo/i.test(err.message || '')
