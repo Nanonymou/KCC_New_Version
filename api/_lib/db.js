@@ -164,11 +164,29 @@ async function createSchema() {
   );`;
 
   await sql`CREATE TABLE IF NOT EXISTS penjualan (
-    id          SERIAL PRIMARY KEY,
-    outlet_id   TEXT NOT NULL REFERENCES outlets(id),
-    id_produk   TEXT NOT NULL,
-    qty         NUMERIC NOT NULL DEFAULT 0,
-    tanggal     DATE NOT NULL DEFAULT CURRENT_DATE
+    id            SERIAL PRIMARY KEY,
+    outlet_id     TEXT NOT NULL REFERENCES outlets(id),
+    id_transaksi  TEXT,
+    id_produk     TEXT NOT NULL,
+    qty           NUMERIC NOT NULL DEFAULT 0,
+    tanggal       DATE NOT NULL DEFAULT CURRENT_DATE
+  );`;
+  // Migrate already-provisioned databases that predate id_transaksi.
+  await sql`ALTER TABLE penjualan ADD COLUMN IF NOT EXISTS id_transaksi TEXT;`;
+
+  // Stock movement ledger — every adjustment/purchase/sale that changes stock
+  // records a dated movement id (ADJ/PO/PJ-YYYYMMDD-NNN) for a full audit trail.
+  await sql`CREATE TABLE IF NOT EXISTS stok_movements (
+    id_transaksi TEXT NOT NULL,
+    outlet_id    TEXT NOT NULL REFERENCES outlets(id),
+    tanggal      DATE NOT NULL DEFAULT CURRENT_DATE,
+    id_bahan     TEXT NOT NULL,
+    jenis        TEXT NOT NULL,           -- ADJUST | PURCHASE | SALE
+    qty          NUMERIC NOT NULL DEFAULT 0,
+    stok_akhir   NUMERIC,
+    catatan      TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (outlet_id, id_transaksi)
   );`;
 
   await sql`CREATE TABLE IF NOT EXISTS app_config (
@@ -178,8 +196,8 @@ async function createSchema() {
     PRIMARY KEY (outlet_id, key)
   );`;
 
-  // Per-outlet atomic counters (e.g. sequential PO numbers). Incremented
-  // inside a transaction so concurrent requests never collide.
+  // Per-outlet atomic counters. Used for date-scoped daily sequences
+  // (name = "po:YYYYMMDD", "pj:YYYYMMDD", "adj:YYYYMMDD") so ids reset per day.
   await sql`CREATE TABLE IF NOT EXISTS counters (
     outlet_id   TEXT NOT NULL REFERENCES outlets(id),
     name        TEXT NOT NULL,
@@ -276,11 +294,22 @@ async function seedIfEmpty() {
     OUTLETS.flatMap((o) => SEED.penjualan.map((j) => [o.id, j.ID_PRODUK, j.QTY, today])),
   );
 
-  // Seed each outlet's PO counter past the highest seeded id so generated
-  // purchase orders never collide with seed rows.
+  // Seed each outlet's per-day PO counters (po:YYYYMMDD) up to the number of
+  // seeded POs on that date, so a new PO on a seeded date continues the daily
+  // sequence instead of colliding with seed rows.
+  const poPerDay = {};
+  SEED.pembelian.forEach((p) => {
+    const compact = p.TANGGAL.replace(/-/g, '');
+    poPerDay[compact] = (poPerDay[compact] || 0) + 1;
+  });
+  const counterRows = [];
+  OUTLETS.forEach((o) => {
+    for (const [compact, count] of Object.entries(poPerDay)) {
+      counterRows.push([o.id, `po:${compact}`, count]);
+    }
+  });
   await batchInsert(
     'counters', ['outlet_id', 'name', 'value'],
-    OUTLETS.map((o) => [o.id, 'pembelian', SEED.pembelian.length]),
-    'ON CONFLICT (outlet_id, name) DO NOTHING',
+    counterRows, 'ON CONFLICT (outlet_id, name) DO NOTHING',
   );
 }
