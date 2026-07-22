@@ -112,10 +112,11 @@ async function apiGetDashboardSummary(p) {
 async function apiBahanCreate(p) {
   const s = await requireSession(p);
   const b = p.data || p;
+  const id = (b.ID_BAHAN && String(b.ID_BAHAN).trim()) || await genId(s.outletId, 'bahan', 'B');
   await sql`INSERT INTO bahan (id, outlet_id, nama, satuan_beli, satuan_pakai, konversi, harga_rata2, harga_sebelumnya, active)
-            VALUES (${b.ID_BAHAN}, ${s.outletId}, ${b.NAMA_BAHAN}, ${b.SATUAN_BELI}, ${b.SATUAN_PAKAI},
+            VALUES (${id}, ${s.outletId}, ${b.NAMA_BAHAN}, ${b.SATUAN_BELI}, ${b.SATUAN_PAKAI},
                     ${num(b.KONVERSI) || 1}, ${num(b.HARGA_RATA2)}, ${num(b.HARGA_SEBELUMNYA ?? b.HARGA_RATA2)}, TRUE);`;
-  return ok({ ID_BAHAN: b.ID_BAHAN });
+  return ok({ ID_BAHAN: id });
 }
 async function apiBahanUpdate(p) {
   const s = await requireSession(p);
@@ -141,9 +142,10 @@ async function apiBahanReactivate(p) {
 async function apiProdukCreate(p) {
   const s = await requireSession(p);
   const b = p.data || p;
+  const id = (b.ID_PRODUK && String(b.ID_PRODUK).trim()) || await genId(s.outletId, 'produk', 'P');
   await sql`INSERT INTO produk (id, outlet_id, nama, kategori, harga_jual, yield_pcs, active)
-            VALUES (${b.ID_PRODUK}, ${s.outletId}, ${b.NAMA_PRODUK}, ${b.KATEGORI}, ${num(b.HARGA_JUAL)}, ${num(b.YIELD_PCS) || 1}, TRUE);`;
-  return ok({ ID_PRODUK: b.ID_PRODUK });
+            VALUES (${id}, ${s.outletId}, ${b.NAMA_PRODUK}, ${b.KATEGORI}, ${num(b.HARGA_JUAL)}, ${num(b.YIELD_PCS) || 1}, TRUE);`;
+  return ok({ ID_PRODUK: id });
 }
 async function apiProdukUpdate(p) {
   const s = await requireSession(p);
@@ -166,10 +168,11 @@ async function apiProdukReactivate(p) {
 async function apiSupplierCreate(p) {
   const s = await requireSession(p);
   const b = p.data || p;
+  const id = (b.ID_SUPPLIER && String(b.ID_SUPPLIER).trim()) || await genId(s.outletId, 'supplier', 'S');
   await sql`INSERT INTO supplier (id, outlet_id, nama, id_bahan, harga, satuan, lead_time, rating, telp, active)
-            VALUES (${b.ID_SUPPLIER}, ${s.outletId}, ${b.NAMA}, ${b.ID_BAHAN}, ${num(b.HARGA)}, ${b.SATUAN},
+            VALUES (${id}, ${s.outletId}, ${b.NAMA}, ${b.ID_BAHAN}, ${num(b.HARGA)}, ${b.SATUAN},
                     ${num(b.LEAD_TIME)}, ${num(b.RATING)}, ${b.TELP}, TRUE);`;
-  return ok({ ID_SUPPLIER: b.ID_SUPPLIER });
+  return ok({ ID_SUPPLIER: id });
 }
 async function apiSupplierUpdate(p) {
   const s = await requireSession(p);
@@ -376,6 +379,21 @@ async function apiHealth() {
     activeSessions: s[0].c,
     seeded: o[0].c > 0,
   });
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// Generate the next master-data id (e.g. B011, P006, S019) for an outlet by
+// taking the highest existing numeric suffix + 1. `table` is a fixed internal
+// identifier (never user input), so template interpolation here is safe.
+async function genId(outletId, table, prefix) {
+  const { rows } = await sql.query(`SELECT id FROM ${table} WHERE outlet_id = $1`, [outletId]);
+  let max = 0;
+  for (const r of rows) {
+    const m = String(r.id).match(/(\d+)\s*$/);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `${prefix}${String(max + 1).padStart(3, '0')}`;
 }
 
 // ─── Registry ────────────────────────────────────────────────────────────────

@@ -291,6 +291,36 @@ export async function fetchDashboard(token) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// WRITE / MUTATION HELPERS
+// Dipakai form input di manager. Berbeda dari fetch helpers: helper ini
+// MELEMPAR error (tidak menelannya) supaya form bisa menampilkan pesan gagal
+// dan tidak salah menandai sukses. Semua otomatis ter-scope ke outlet lewat
+// session token.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Inventory / Pembelian ──────────────────────────────────
+export const createPurchase = (token, data) => gasRun("apiInvPurchaseCreate", { token, data });
+export const voidPurchase   = (token, ID_PO) => gasRun("apiInvPurchaseVoid", { token, ID_PO });
+export const adjustStok     = (token, data) => gasRun("apiInvAdjustment", { token, data });
+export const recordSale     = (token, data) => gasRun("apiInvSalesCreate", { token, data });
+
+// ── Master: Bahan ──────────────────────────────────────────
+export const createBahan = (token, data) => gasRun("apiBahanCreate", { token, data });
+export const updateBahan = (token, data) => gasRun("apiBahanUpdate", { token, data });
+
+// ── Master: Produk ─────────────────────────────────────────
+export const createProduk = (token, data) => gasRun("apiProdukCreate", { token, data });
+export const updateProduk = (token, data) => gasRun("apiProdukUpdate", { token, data });
+
+// ── Master: Supplier ───────────────────────────────────────
+export const createSupplier = (token, data) => gasRun("apiSupplierCreate", { token, data });
+
+// ── Resep ──────────────────────────────────────────────────
+export const addResepItem    = (token, data) => gasRun("apiResepAddItem", { token, data });
+export const updateResepItem = (token, data) => gasRun("apiResepUpdateItem", { token, data });
+export const deleteResepItem = (token, data) => gasRun("apiResepDeleteItem", { token, data });
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ENGINE FUNCTIONS — pure, no side effects, no React
 // Semua komponen memanggil fungsi dari sini. Tidak boleh menduplikasi.
 // ═══════════════════════════════════════════════════════════════════════════

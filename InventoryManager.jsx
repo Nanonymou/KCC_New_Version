@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useAuth } from "./AuthContext";
 import {
   INITIAL_BAHAN,
@@ -9,8 +9,11 @@ import {
   fetchStok,
   fetchResep,
   fetchDashboard,
+  createBahan,
+  adjustStok,
   round2, idr,
 } from "./kcc_data_layer";
+import { Modal, Field, TextInput, Select, Button, FormError, Toast } from "./FormKit";
 
 const S = {
   card: {
@@ -47,7 +50,8 @@ function statusStok(stok, minStok) {
 }
 
 export default function InventoryManager() {
-  const { token } = useAuth();
+  const { token, role, isDemo } = useAuth();
+  const canWrite = !isDemo && (role === "ADMIN" || role === "SUPER_ADMIN");
 
   const [filterStatus, setFilterStatus] = useState("Semua");
   const [searchQ, setSearchQ] = useState("");
@@ -58,20 +62,23 @@ export default function InventoryManager() {
   const [resepData,    setResepData]    = useState(RESEP);
   const [penjualan,    setPenjualan]    = useState(PENJUALAN_HARI_INI);
 
-  useEffect(() => {
+  const [showAdd, setShowAdd]   = useState(false);
+  const [adjustRow, setAdjustRow] = useState(null); // bahan row being adjusted
+  const [toast, setToast]       = useState("");
+  const flashToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
+
+  const reload = useCallback(async () => {
     if (!token) return;
-    Promise.all([
-      fetchBahan(token),
-      fetchStok(token),
-      fetchResep(token),
-      fetchDashboard(token),
-    ]).then(([bahanData, stokData, resepRes, dashData]) => {
-      if (bahanData)           setBahanList(bahanData);
-      if (stokData)            setStokBahan(stokData);
-      if (resepRes)            setResepData(resepRes);
-      if (dashData?.penjualan) setPenjualan(dashData.penjualan);
-    });
+    const [bahanData, stokData, resepRes, dashData] = await Promise.all([
+      fetchBahan(token), fetchStok(token), fetchResep(token), fetchDashboard(token),
+    ]);
+    if (bahanData)           setBahanList(bahanData);
+    if (stokData)            setStokBahan(stokData);
+    if (resepRes)            setResepData(resepRes);
+    if (dashData?.penjualan) setPenjualan(dashData.penjualan);
   }, [token]);
+
+  useEffect(() => { reload(); }, [reload]);
 
   const bahanMap = useMemo(() => {
     const m = {};
@@ -145,13 +152,22 @@ export default function InventoryManager() {
       `}</style>
 
       {/* Header */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 20, fontWeight: 800, color: "#ecebe5", letterSpacing: "-0.02em" }}>
-          📦 Inventory Bahan Baku
+      <div style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#ecebe5", letterSpacing: "-0.02em" }}>
+            📦 Inventory Bahan Baku
+          </div>
+          <div style={{ fontSize: 13, color: "#78746b", marginTop: 4 }}>
+            Stok real-time, nilai persediaan & ketahanan bahan
+          </div>
         </div>
-        <div style={{ fontSize: 13, color: "#78746b", marginTop: 4 }}>
-          Stok real-time, nilai persediaan & ketahanan bahan
-        </div>
+        {canWrite ? (
+          <Button onClick={() => setShowAdd(true)}>＋ Tambah Bahan</Button>
+        ) : (
+          <span style={{ fontSize: 11.5, color: "#615d55" }}>
+            {isDemo ? "Mode demo — hanya lihat" : "Perlu akses admin untuk input"}
+          </span>
+        )}
       </div>
 
       {/* KPI */}
@@ -233,7 +249,7 @@ export default function InventoryManager() {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {["Bahan", "Stok", "Min Stok", "Rasio", "Kebutuhan/Hari", "Tahan", "Nilai Stok", "Status"].map(h => (
+              {["Bahan", "Stok", "Min Stok", "Rasio", "Kebutuhan/Hari", "Tahan", "Nilai Stok", "Status", ...(canWrite ? ["Aksi"] : [])].map(h => (
                 <th key={h} style={S.th}>{h}</th>
               ))}
             </tr>
@@ -280,6 +296,18 @@ export default function InventoryManager() {
                       {label}
                     </span>
                   </td>
+                  {canWrite && (
+                    <td style={S.td}>
+                      <button
+                        onClick={() => setAdjustRow(b)}
+                        style={{
+                          padding: "4px 10px", fontSize: 11.5, fontWeight: 600,
+                          color: "#c96442", background: "rgba(201,100,66,0.10)",
+                          border: "1px solid rgba(201,100,66,0.32)", borderRadius: 6, cursor: "pointer",
+                        }}
+                      >Sesuaikan</button>
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -317,6 +345,135 @@ export default function InventoryManager() {
             })}
         </div>
       </Card>
+
+      {showAdd && (
+        <AddBahanModal
+          token={token}
+          onClose={() => setShowAdd(false)}
+          onDone={async (nama) => { setShowAdd(false); await reload(); flashToast(`Bahan "${nama}" ditambahkan`); }}
+        />
+      )}
+      {adjustRow && (
+        <AdjustStokModal
+          token={token}
+          row={adjustRow}
+          stok={stokMap[adjustRow.ID_BAHAN]}
+          onClose={() => setAdjustRow(null)}
+          onDone={async () => { const n = adjustRow.NAMA_BAHAN; setAdjustRow(null); await reload(); flashToast(`Stok "${n}" diperbarui`); }}
+        />
+      )}
+      <Toast show={!!toast}>{toast}</Toast>
     </div>
+  );
+}
+
+// ─── Add Bahan modal ─────────────────────────────────────────────────────────
+function AddBahanModal({ token, onClose, onDone }) {
+  const [nama, setNama]           = useState("");
+  const [satuanBeli, setSatuanBeli]   = useState("kg");
+  const [satuanPakai, setSatuanPakai] = useState("gram");
+  const [konversi, setKonversi]   = useState("1000");
+  const [harga, setHarga]         = useState("");
+  const [stok, setStok]           = useState("");
+  const [minStok, setMinStok]     = useState("");
+  const [saving, setSaving]       = useState(false);
+  const [error, setError]         = useState(null);
+
+  async function submit() {
+    setError(null);
+    if (!nama.trim())          return setError("Nama bahan wajib diisi.");
+    if (!(Number(harga) > 0))  return setError("Harga rata-rata harus lebih dari 0.");
+    setSaving(true);
+    try {
+      const res = await createBahan(token, {
+        NAMA_BAHAN: nama.trim(), SATUAN_BELI: satuanBeli.trim(), SATUAN_PAKAI: satuanPakai.trim(),
+        KONVERSI: Number(konversi) || 1, HARGA_RATA2: Number(harga),
+      });
+      const idBahan = res?.data?.ID_BAHAN;
+      // Set initial stock if provided.
+      if (idBahan && (Number(stok) > 0 || Number(minStok) > 0)) {
+        await adjustStok(token, { ID_BAHAN: idBahan, STOK: Number(stok) || 0, MIN_STOK: Number(minStok) || 0 });
+      }
+      onDone(nama.trim());
+    } catch (e) {
+      setError(e.message || "Gagal menambah bahan.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Tambah Bahan Baku"
+      subtitle="ID bahan dibuat otomatis"
+      onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Batal</Button>
+        <Button onClick={submit} loading={saving}>Simpan Bahan</Button>
+      </>}
+    >
+      <FormError>{error}</FormError>
+      <Field label="Nama Bahan">
+        <TextInput value={nama} onChange={e => setNama(e.target.value)} placeholder="Contoh: Daging Sapi" autoFocus />
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <Field label="Satuan Beli"><TextInput value={satuanBeli} onChange={e => setSatuanBeli(e.target.value)} placeholder="kg" /></Field>
+        <Field label="Satuan Pakai"><TextInput value={satuanPakai} onChange={e => setSatuanPakai(e.target.value)} placeholder="gram" /></Field>
+        <Field label="Konversi" hint="1 satuan beli = ? satuan pakai"><TextInput type="number" min="1" step="any" value={konversi} onChange={e => setKonversi(e.target.value)} /></Field>
+      </div>
+      <Field label="Harga Rata-rata / satuan beli">
+        <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} placeholder="0" />
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label="Stok Awal (opsional)"><TextInput type="number" min="0" step="any" value={stok} onChange={e => setStok(e.target.value)} placeholder="0" /></Field>
+        <Field label="Stok Minimum (opsional)"><TextInput type="number" min="0" step="any" value={minStok} onChange={e => setMinStok(e.target.value)} placeholder="0" /></Field>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Adjust Stok modal ───────────────────────────────────────────────────────
+function AdjustStokModal({ token, row, stok, onClose, onDone }) {
+  const [nilai, setNilai]     = useState(String(stok?.STOK ?? 0));
+  const [minVal, setMinVal]   = useState(String(stok?.MIN_STOK ?? 0));
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState(null);
+
+  async function submit() {
+    setError(null);
+    setSaving(true);
+    try {
+      await adjustStok(token, {
+        ID_BAHAN: row.ID_BAHAN, STOK: Number(nilai) || 0, MIN_STOK: Number(minVal) || 0,
+      });
+      onDone();
+    } catch (e) {
+      setError(e.message || "Gagal menyesuaikan stok.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Sesuaikan Stok — ${row.NAMA_BAHAN}`}
+      subtitle="Set nilai stok fisik & batas minimum"
+      width={400}
+      onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Batal</Button>
+        <Button onClick={submit} loading={saving}>Simpan</Button>
+      </>}
+    >
+      <FormError>{error}</FormError>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label={`Stok (${row.SATUAN_BELI})`}>
+          <TextInput type="number" min="0" step="any" value={nilai} onChange={e => setNilai(e.target.value)} autoFocus />
+        </Field>
+        <Field label={`Min Stok (${row.SATUAN_BELI})`}>
+          <TextInput type="number" min="0" step="any" value={minVal} onChange={e => setMinVal(e.target.value)} />
+        </Field>
+      </div>
+    </Modal>
   );
 }
