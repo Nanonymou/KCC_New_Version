@@ -262,20 +262,32 @@ async function apiInvPurchaseCreate(p) {
 async function apiInvPurchaseVoid(p) {
   const s = await requireSession(p);
   const id = p.ID_PO || p.id;
-  // Only reverse stock for a purchase that was actually received, and flip the
-  // status in the same WHERE so a double-void cannot decrement stock twice.
-  const { rows } = await sql`
-    UPDATE pembelian SET status='Void'
-    WHERE outlet_id=${s.outletId} AND id_po=${id} AND status='Diterima'
-    RETURNING id_bahan, qty;`;
-  if (rows[0]) {
-    await sql`UPDATE stok SET stok = stok - ${num(rows[0].qty)}
-              WHERE outlet_id=${s.outletId} AND id_bahan=${rows[0].id_bahan};`;
-  } else {
-    // Not received (or already void) — just mark it void without touching stock.
-    await sql`UPDATE pembelian SET status='Void' WHERE outlet_id=${s.outletId} AND id_po=${id};`;
+  // Status flip + stock reversal run in one transaction so a mid-flight
+  // failure can never leave a voided purchase whose stock was not reversed.
+  // The status='Diterima' guard in the WHERE also makes a double-void unable
+  // to decrement stock twice.
+  const client = await db.connect();
+  try {
+    await client.sql`BEGIN`;
+    const { rows } = await client.sql`
+      UPDATE pembelian SET status='Void'
+      WHERE outlet_id=${s.outletId} AND id_po=${id} AND status='Diterima'
+      RETURNING id_bahan, qty;`;
+    if (rows[0]) {
+      await client.sql`UPDATE stok SET stok = stok - ${num(rows[0].qty)}
+                WHERE outlet_id=${s.outletId} AND id_bahan=${rows[0].id_bahan};`;
+    } else {
+      // Not received (or already void) — just mark it void without touching stock.
+      await client.sql`UPDATE pembelian SET status='Void' WHERE outlet_id=${s.outletId} AND id_po=${id};`;
+    }
+    await client.sql`COMMIT`;
+    return ok({ ID_PO: id });
+  } catch (e) {
+    try { await client.sql`ROLLBACK`; } catch { /* ignore */ }
+    throw e;
+  } finally {
+    client.release();
   }
-  return ok({ ID_PO: id });
 }
 async function apiInvSalesCreate(p) {
   const s = await requireSession(p);

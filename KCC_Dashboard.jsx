@@ -213,8 +213,12 @@ export default function KCCDashboard() {
       if (stokData)               setStokBahan(stokData);
       if (dashData?.penjualan)    setPenjualan(dashData.penjualan);
       // The fetch* helpers return null on failure — only claim "live data"
-      // when the core datasets actually arrived from the backend.
-      setStatus(bahanData && stokData ? "ready" : "error");
+      // when every dataset the dashboard renders actually arrived.
+      const hasLiveData =
+        Array.isArray(bahanData) &&
+        Array.isArray(stokData) &&
+        Array.isArray(dashData?.penjualan);
+      setStatus(hasLiveData ? "ready" : "error");
     }).catch(() => setStatus("error"));
   }, [token, isDemo]);
 

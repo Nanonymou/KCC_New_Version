@@ -179,7 +179,7 @@ export default function LoginPage() {
         {/* Card */}
         <div className="kcc-card">
           {error && (
-            <div style={{
+            <div role="alert" aria-live="assertive" style={{
               background: T.dangerSoft, color: T.danger,
               border: `1px solid ${T.danger}44`, borderRadius: T.radiusSm,
               padding: '10px 13px', fontSize: 13, marginBottom: 18, lineHeight: 1.5,

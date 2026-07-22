@@ -63,9 +63,14 @@ export function gasRun(fnName, params) {
       return result;
     })
     .catch((err) => {
-      // Network / transport error (server unreachable, offline, CORS, …)
-      if (!err.code) {
-        const e = new Error(err.message || 'Tidak dapat terhubung ke server.');
+      // Network / transport error (server unreachable, offline, CORS, timeout).
+      // An aborted fetch surfaces as DOMException AbortError with a truthy
+      // legacy numeric .code (20), so it must be matched by name explicitly.
+      const aborted = err.name === 'AbortError';
+      if (!err.code || aborted) {
+        const e = new Error(aborted
+          ? 'Permintaan melebihi batas waktu. Periksa koneksi Anda.'
+          : (err.message || 'Tidak dapat terhubung ke server.'));
         e.code = 'NETWORK_ERROR';
         e.original = err;
         throw e;
