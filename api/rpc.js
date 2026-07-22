@@ -13,9 +13,18 @@
 import { ensureReady } from './_lib/db.js';
 import { HANDLERS } from './_lib/handlers.js';
 
+// GET is limited to read-only, side-effect-free actions so credentials and
+// mutation payloads can never travel in a URL (query strings land in access
+// logs and browser history).
+const GET_ALLOWED = new Set(['apiHealth']);
+
 export default async function handler(req, res) {
-  // CORS (same-origin in production; permissive here so previews work).
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS: same-origin in production (no wildcard). Non-production deployments
+  // (preview/dev) reflect '*' so previews and local tooling work.
+  const isProd = process.env.VERCEL_ENV === 'production';
+  const allowOrigin = isProd ? (process.env.ALLOWED_ORIGIN || '') : '*';
+  if (allowOrigin) res.setHeader('Access-Control-Allow-Origin', allowOrigin);
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -25,6 +34,12 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       action = req.query.action;
       params = req.query;
+      if (!GET_ALLOWED.has(action)) {
+        return res.status(405).json({
+          success: false, code: 'METHOD_NOT_ALLOWED',
+          message: 'Gunakan POST untuk action ini. GET hanya untuk health check.',
+        });
+      }
     } else {
       const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
       action = body.action;

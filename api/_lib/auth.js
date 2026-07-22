@@ -3,9 +3,13 @@
 // Session-based auth backed by Postgres (replaces the GAS auth.gs layer).
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { sql, verifyPassword, newToken } from './db.js';
+import { sql, verifyPassword, newToken, hashPassword } from './db.js';
 
 const SESSION_TTL_HOURS = 12;
+
+// Dummy credentials used to equalize password-verification cost for unknown
+// users, closing a username-enumeration timing side channel.
+const { salt: DUMMY_SALT, hash: DUMMY_HASH } = hashPassword('kcc-dummy-password');
 
 /** Login: { outletCode, username, password } → { token, session } */
 export async function login({ outletCode, username, password }) {
@@ -15,7 +19,7 @@ export async function login({ outletCode, username, password }) {
 
   const { rows } = await sql`
     SELECT u.id, u.username, u.password_hash, u.salt, u.role, u.active,
-           o.id AS outlet_id, o.name AS outlet_name
+           o.id AS outlet_id, o.name AS outlet_name, o.active AS outlet_active
     FROM users u
     JOIN outlets o ON o.id = u.outlet_id
     WHERE o.code = ${String(outletCode).trim()}
@@ -23,11 +27,21 @@ export async function login({ outletCode, username, password }) {
     LIMIT 1;`;
 
   const user = rows[0];
-  if (!user || !user.active) {
+
+  // Always run a password verification (even for unknown users, with dummy
+  // material) so response latency does not reveal whether the account exists.
+  const okPassword = user
+    ? verifyPassword(password, user.salt, user.password_hash)
+    : verifyPassword(password, DUMMY_SALT, DUMMY_HASH);
+
+  if (!user || !okPassword) {
     return { success: false, code: 'AUTH_FAILED', message: 'Kombinasi outlet/username/password salah.' };
   }
-  if (!verifyPassword(password, user.salt, user.password_hash)) {
-    return { success: false, code: 'AUTH_FAILED', message: 'Kombinasi outlet/username/password salah.' };
+  if (!user.outlet_active) {
+    return { success: false, code: 'OUTLET_INACTIVE', message: 'Outlet ini tidak aktif. Hubungi administrator.' };
+  }
+  if (!user.active) {
+    return { success: false, code: 'USER_INACTIVE', message: 'Akun Anda tidak aktif. Hubungi administrator.' };
   }
 
   const token = newToken();

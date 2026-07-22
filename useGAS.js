@@ -29,12 +29,20 @@ const RPC_URL = `${API_BASE}/api/rpc`;
  * @param {*}      params - single params object
  * @returns {Promise<*>}  - resolves with the response envelope, rejects on failure
  */
+const REQUEST_TIMEOUT_MS = 15000;
+
 export function gasRun(fnName, params) {
+  // Abort a stalled request so callers never hang with loading stuck true.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
   return fetch(RPC_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: fnName, params: params ?? {} }),
+    signal: controller.signal,
   })
+    .finally(() => clearTimeout(timer))
     .then(async (resp) => {
       let result;
       try {

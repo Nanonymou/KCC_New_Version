@@ -196,10 +196,12 @@ export default function KCCDashboard() {
   const [bahan,     setBahan]     = useState(INITIAL_BAHAN);
   const [stokBahan, setStokBahan] = useState(STOK_BAHAN);
   const [penjualan, setPenjualan] = useState(PENJUALAN_HARI_INI);
-  const [fetchDone, setFetchDone] = useState(false);
+  // 'loading' → 'ready' (live data received) | 'error' (backend/DB unavailable)
+  const [status, setStatus] = useState("loading");
 
   useEffect(() => {
     if (!token) return;
+    setStatus("loading");
     Promise.all([
       fetchBahan(token),
       fetchStok(token),
@@ -208,7 +210,10 @@ export default function KCCDashboard() {
       if (bahanData)              setBahan(bahanData);
       if (stokData)               setStokBahan(stokData);
       if (dashData?.penjualan)    setPenjualan(dashData.penjualan);
-    }).finally(() => setFetchDone(true));
+      // The fetch* helpers return null on failure — only claim "live data"
+      // when the core datasets actually arrived from the backend.
+      setStatus(bahanData && stokData ? "ready" : "error");
+    }).catch(() => setStatus("error"));
   }, [token]);
 
   const data = useMemo(() => getDashboardData(bahan, stokBahan, penjualan), [bahan, stokBahan, penjualan]);
@@ -256,8 +261,14 @@ export default function KCCDashboard() {
             </h1>
           </div>
           <div style={{ fontSize: 12.5, color: T.textFaint, display: "flex", alignItems: "center", gap: 7 }}>
-            <span style={{ width: 7, height: 7, borderRadius: 99, background: fetchDone ? T.success : T.warning, display: "inline-block", animation: fetchDone ? "none" : "pulse 1.2s infinite" }} />
-            {fetchDone ? "Data langsung dari database" : "Memuat data…"}
+            <span style={{
+              width: 7, height: 7, borderRadius: 99, display: "inline-block",
+              background: status === "ready" ? T.success : status === "error" ? T.danger : T.warning,
+              animation: status === "loading" ? "pulse 1.2s infinite" : "none",
+            }} />
+            {status === "ready" ? "Data langsung dari database"
+              : status === "error" ? "Gagal memuat data — menampilkan contoh"
+              : "Memuat data…"}
           </div>
         </div>
 

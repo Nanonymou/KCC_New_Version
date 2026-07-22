@@ -12,9 +12,12 @@
 // (ensureReady) so the app is turn-key: attach a DB in Vercel, deploy, done.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { sql } from '@vercel/postgres';
+import { sql, db } from '@vercel/postgres';
 import crypto from 'node:crypto';
 import { SEED } from './seed.js';
+
+// Advisory-lock key that serializes provisioning across concurrent cold starts.
+const PROVISION_LOCK = 727274;
 
 export { sql };
 
@@ -42,13 +45,29 @@ export function newToken() {
 let readyPromise = null;
 
 export function ensureReady() {
-  if (!readyPromise) readyPromise = provision();
+  if (!readyPromise) {
+    readyPromise = provision().catch((err) => {
+      readyPromise = null; // clear cache so the next request can retry
+      throw err;
+    });
+  }
   return readyPromise;
 }
 
 async function provision() {
-  await createSchema();
-  await seedIfEmpty();
+  // Hold a session-level advisory lock so two concurrent cold starts cannot
+  // both pass the "outlets" emptiness guard and double-insert seed rows. The
+  // second waiter proceeds only after the first finishes, by which point the
+  // outlet exists and seedIfEmpty() short-circuits.
+  const client = await db.connect();
+  try {
+    await client.sql`SELECT pg_advisory_lock(${PROVISION_LOCK})`;
+    await createSchema();
+    await seedIfEmpty();
+  } finally {
+    try { await client.sql`SELECT pg_advisory_unlock(${PROVISION_LOCK})`; } catch { /* ignore */ }
+    client.release();
+  }
 }
 
 async function createSchema() {
