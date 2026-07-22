@@ -60,7 +60,12 @@ function getAnalyticsData(bahanList, produkList, penjualanHariIni, supplierList)
   const supplierByBahan = {};
   supplierList.forEach(s => {
     if (!supplierByBahan[s.ID_BAHAN]) supplierByBahan[s.ID_BAHAN] = [];
-    supplierByBahan[s.ID_BAHAN].push({ ...s });
+    // Normalize the supplier display name so downstream code that reads
+    // NAMA_SUPPLIER never renders "undefined" (source data uses NAMA).
+    supplierByBahan[s.ID_BAHAN].push({
+      ...s,
+      NAMA_SUPPLIER: s.NAMA_SUPPLIER || s.NAMA || s.ID_SUPPLIER || "Supplier",
+    });
   });
 
   // Supplier termurah & termahal per bahan (hanya bahan yang ada suppliernya)
@@ -604,8 +609,10 @@ function SupplierAnalysis({ supplierSummary }) {
   const cheapestCount = {};
   const priciestCount = {};
   supplierSummary.forEach(s => {
-    cheapestCount[s.TERMURAH.NAMA_SUPPLIER] = (cheapestCount[s.TERMURAH.NAMA_SUPPLIER] || 0) + 1;
-    priciestCount[s.TERMAHAL.NAMA_SUPPLIER] = (priciestCount[s.TERMAHAL.NAMA_SUPPLIER] || 0) + 1;
+    const murah = s.TERMURAH?.NAMA_SUPPLIER;
+    const mahal = s.TERMAHAL?.NAMA_SUPPLIER;
+    if (murah) cheapestCount[murah] = (cheapestCount[murah] || 0) + 1;
+    if (mahal) priciestCount[mahal] = (priciestCount[mahal] || 0) + 1;
   });
   const cheapestRank = Object.entries(cheapestCount).sort((a, b) => b[1] - a[1]);
   const priciestRank = Object.entries(priciestCount).sort((a, b) => b[1] - a[1]);
@@ -630,6 +637,9 @@ function SupplierAnalysis({ supplierSummary }) {
               <div style={{ fontSize: 11, color: "#615d55", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
                 Supplier Paling Sering Termurah
               </div>
+              {cheapestRank.length === 0 && (
+                <div style={{ fontSize: 12, color: "#78746b", padding: "6px 0" }}>Belum ada data supplier.</div>
+              )}
               {cheapestRank.map(([nama, count], i) => (
                 <div key={nama} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -663,6 +673,9 @@ function SupplierAnalysis({ supplierSummary }) {
               <div style={{ fontSize: 11, color: "#615d55", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
                 Supplier Paling Sering Termahal
               </div>
+              {priciestRank.length === 0 && (
+                <div style={{ fontSize: 12, color: "#78746b", padding: "6px 0" }}>Belum ada data supplier.</div>
+              )}
               {priciestRank.map(([nama, count], i) => (
                 <div key={nama} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -749,7 +762,9 @@ function SupplierAlertRow({ color, nama, supplier, harga, satuan, kota }) {
     }}>
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "#ecebe5" }}>{nama}</div>
-        <div style={{ fontSize: 10, color: "#78746b" }}>{supplier} · {kota}</div>
+        <div style={{ fontSize: 10, color: "#78746b" }}>
+          {[supplier, kota].filter(Boolean).join(" · ") || "—"}
+        </div>
       </div>
       <div style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "monospace" }}>
         {idr(harga)}<span style={{ fontSize: 10, fontWeight: 400 }}>/{satuan}</span>
