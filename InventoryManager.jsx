@@ -385,15 +385,13 @@ function AddBahanModal({ token, onClose, onDone }) {
     if (!(Number(harga) > 0))  return setError("Harga rata-rata harus lebih dari 0.");
     setSaving(true);
     try {
-      const res = await createBahan(token, {
+      // Bahan + opening stock are created atomically in one backend call, so a
+      // failed retry can never create a duplicate bahan.
+      await createBahan(token, {
         NAMA_BAHAN: nama.trim(), SATUAN_BELI: satuanBeli.trim(), SATUAN_PAKAI: satuanPakai.trim(),
         KONVERSI: Number(konversi) || 1, HARGA_RATA2: Number(harga),
+        STOK: Number(stok) || 0, MIN_STOK: Number(minStok) || 0,
       });
-      const idBahan = res?.data?.ID_BAHAN;
-      // Set initial stock if provided.
-      if (idBahan && (Number(stok) > 0 || Number(minStok) > 0)) {
-        await adjustStok(token, { ID_BAHAN: idBahan, STOK: Number(stok) || 0, MIN_STOK: Number(minStok) || 0 });
-      }
       onDone(nama.trim());
     } catch (e) {
       setError(e.message || "Gagal menambah bahan.");

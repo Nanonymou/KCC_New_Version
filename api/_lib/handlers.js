@@ -112,11 +112,36 @@ async function apiGetDashboardSummary(p) {
 async function apiBahanCreate(p) {
   const s = await requireSession(p);
   const b = p.data || p;
-  const id = (b.ID_BAHAN && String(b.ID_BAHAN).trim()) || await genId(s.outletId, 'bahan', 'B');
-  await sql`INSERT INTO bahan (id, outlet_id, nama, satuan_beli, satuan_pakai, konversi, harga_rata2, harga_sebelumnya, active)
-            VALUES (${id}, ${s.outletId}, ${b.NAMA_BAHAN}, ${b.SATUAN_BELI}, ${b.SATUAN_PAKAI},
-                    ${num(b.KONVERSI) || 1}, ${num(b.HARGA_RATA2)}, ${num(b.HARGA_SEBELUMNYA ?? b.HARGA_RATA2)}, TRUE);`;
-  return ok({ ID_BAHAN: id });
+  const provided = b.ID_BAHAN && String(b.ID_BAHAN).trim();
+  // Optional opening stock is written in the SAME transaction as the bahan, so
+  // a retry after a partial failure can never leave a bahan without its stock
+  // (or create a duplicate). The id is retried on a unique collision.
+  const setStock = b.STOK != null || b.MIN_STOK != null;
+  const client = await db.connect();
+  try {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const id = provided || await genId(s.outletId, 'bahan', 'B');
+      try {
+        await client.sql`BEGIN`;
+        await client.sql`INSERT INTO bahan (id, outlet_id, nama, satuan_beli, satuan_pakai, konversi, harga_rata2, harga_sebelumnya, active)
+                  VALUES (${id}, ${s.outletId}, ${b.NAMA_BAHAN}, ${b.SATUAN_BELI}, ${b.SATUAN_PAKAI},
+                          ${num(b.KONVERSI) || 1}, ${num(b.HARGA_RATA2)}, ${num(b.HARGA_SEBELUMNYA ?? b.HARGA_RATA2)}, TRUE);`;
+        if (setStock) {
+          await client.sql`INSERT INTO stok (outlet_id, id_bahan, stok, min_stok)
+                    VALUES (${s.outletId}, ${id}, ${num(b.STOK)}, ${num(b.MIN_STOK)})
+                    ON CONFLICT (outlet_id, id_bahan) DO UPDATE SET stok=${num(b.STOK)}, min_stok=${num(b.MIN_STOK)};`;
+        }
+        await client.sql`COMMIT`;
+        return ok({ ID_BAHAN: id });
+      } catch (e) {
+        try { await client.sql`ROLLBACK`; } catch { /* ignore */ }
+        if (e?.code === '23505' && !provided && attempt < 5) continue; // id race — regen & retry
+        throw e;
+      }
+    }
+  } finally {
+    client.release();
+  }
 }
 async function apiBahanUpdate(p) {
   const s = await requireSession(p);
@@ -142,9 +167,9 @@ async function apiBahanReactivate(p) {
 async function apiProdukCreate(p) {
   const s = await requireSession(p);
   const b = p.data || p;
-  const id = (b.ID_PRODUK && String(b.ID_PRODUK).trim()) || await genId(s.outletId, 'produk', 'P');
-  await sql`INSERT INTO produk (id, outlet_id, nama, kategori, harga_jual, yield_pcs, active)
-            VALUES (${id}, ${s.outletId}, ${b.NAMA_PRODUK}, ${b.KATEGORI}, ${num(b.HARGA_JUAL)}, ${num(b.YIELD_PCS) || 1}, TRUE);`;
+  const id = await insertWithGenId(s.outletId, 'produk', 'P', b.ID_PRODUK, (id) =>
+    sql`INSERT INTO produk (id, outlet_id, nama, kategori, harga_jual, yield_pcs, active)
+        VALUES (${id}, ${s.outletId}, ${b.NAMA_PRODUK}, ${b.KATEGORI}, ${num(b.HARGA_JUAL)}, ${num(b.YIELD_PCS) || 1}, TRUE);`);
   return ok({ ID_PRODUK: id });
 }
 async function apiProdukUpdate(p) {
@@ -168,10 +193,10 @@ async function apiProdukReactivate(p) {
 async function apiSupplierCreate(p) {
   const s = await requireSession(p);
   const b = p.data || p;
-  const id = (b.ID_SUPPLIER && String(b.ID_SUPPLIER).trim()) || await genId(s.outletId, 'supplier', 'S');
-  await sql`INSERT INTO supplier (id, outlet_id, nama, id_bahan, harga, satuan, lead_time, rating, telp, active)
-            VALUES (${id}, ${s.outletId}, ${b.NAMA}, ${b.ID_BAHAN}, ${num(b.HARGA)}, ${b.SATUAN},
-                    ${num(b.LEAD_TIME)}, ${num(b.RATING)}, ${b.TELP}, TRUE);`;
+  const id = await insertWithGenId(s.outletId, 'supplier', 'S', b.ID_SUPPLIER, (id) =>
+    sql`INSERT INTO supplier (id, outlet_id, nama, id_bahan, harga, satuan, lead_time, rating, telp, active)
+        VALUES (${id}, ${s.outletId}, ${b.NAMA}, ${b.ID_BAHAN}, ${num(b.HARGA)}, ${b.SATUAN},
+                ${num(b.LEAD_TIME)}, ${num(b.RATING)}, ${b.TELP}, TRUE);`);
   return ok({ ID_SUPPLIER: id });
 }
 async function apiSupplierUpdate(p) {
@@ -420,6 +445,24 @@ async function genId(outletId, table, prefix) {
     if (m) max = Math.max(max, parseInt(m[1], 10));
   }
   return `${prefix}${String(max + 1).padStart(3, '0')}`;
+}
+
+// Insert a master row whose id is either supplied or auto-generated, retrying
+// with a fresh suffix if a concurrent create raced onto the same id (unique
+// violation 23505). Only auto-generated ids are retried; an explicit duplicate
+// id surfaces the error as before.
+async function insertWithGenId(outletId, table, prefix, providedId, doInsert) {
+  const provided = providedId && String(providedId).trim();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const id = provided || await genId(outletId, table, prefix);
+    try {
+      await doInsert(id);
+      return id;
+    } catch (e) {
+      if (e?.code === '23505' && !provided && attempt < 5) continue;
+      throw e;
+    }
+  }
 }
 
 // Date-based transaction id: PREFIX-YYYYMMDD-NNN, where NNN is a per-day

@@ -4,16 +4,27 @@
  * one place so the managers stay focused on their own logic.
  */
 
-import { useEffect } from "react";
+import { useEffect, useId, useRef, cloneElement, isValidElement } from "react";
 import { T } from "./theme";
 
 // ─── Modal ────────────────────────────────────────────────────────────────
 export function Modal({ title, subtitle, onClose, children, footer, width = 460 }) {
+  const titleId = useId();
+  const dialogRef = useRef(null);
+
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Move focus into the dialog on open and restore it to the previously
+  // focused element on close, so keyboard/screen-reader users stay oriented.
+  useEffect(() => {
+    const prev = document.activeElement;
+    dialogRef.current?.focus();
+    return () => { if (prev && prev.focus) prev.focus(); };
+  }, []);
 
   return (
     <div
@@ -26,17 +37,17 @@ export function Modal({ title, subtitle, onClose, children, footer, width = 460 
       }}
     >
       <style>{`@keyframes kcc-modal-in { from { opacity:0; transform: translateY(10px) scale(.99);} to {opacity:1; transform:none;} }`}</style>
-      <div style={{
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} style={{
         width: "100%", maxWidth: width, background: T.surface,
         border: `1px solid ${T.border}`, borderRadius: T.radiusLg,
-        boxShadow: T.shadowLg, animation: "kcc-modal-in .2s ease both",
+        boxShadow: T.shadowLg, animation: "kcc-modal-in .2s ease both", outline: "none",
       }}>
         <div style={{
           padding: "16px 20px", borderBottom: `1px solid ${T.borderSoft}`,
           display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12,
         }}>
           <div>
-            <div style={{ fontFamily: T.fontDisplay, fontSize: 18, fontWeight: 600, color: T.text }}>{title}</div>
+            <div id={titleId} style={{ fontFamily: T.fontDisplay, fontSize: 18, fontWeight: 600, color: T.text }}>{title}</div>
             {subtitle && <div style={{ fontSize: 12.5, color: T.textMuted, marginTop: 3 }}>{subtitle}</div>}
           </div>
           <button onClick={onClose} aria-label="Tutup" style={{
@@ -71,10 +82,11 @@ const controlStyle = {
 };
 
 export function Field({ label, hint, children }) {
+  const inputId = useId();
   return (
     <div style={fieldWrap}>
-      <label style={labelStyle}>{label}</label>
-      {children}
+      <label style={labelStyle} htmlFor={inputId}>{label}</label>
+      {isValidElement(children) ? cloneElement(children, { id: children.props.id ?? inputId }) : children}
       {hint && <div style={{ fontSize: 11, color: T.textFaint, marginTop: 4 }}>{hint}</div>}
     </div>
   );

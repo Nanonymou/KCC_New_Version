@@ -77,15 +77,20 @@ export default function ResepManager() {
   useEffect(() => { reload(); }, [reload]);
 
   const [selectedProduk, setSelectedProduk] = useState(null);
+  const [deletingKey, setDeletingKey] = useState(null);
 
   async function handleDeleteItem(idProduk, idBahan, nama) {
+    if (deletingKey === idBahan) return; // already in flight
     if (!window.confirm(`Hapus "${nama}" dari resep?`)) return;
+    setDeletingKey(idBahan);
     try {
       await deleteResepItem(token, { ID_PRODUK: idProduk, ID_BAHAN: idBahan });
       await reload();
       flashToast(`"${nama}" dihapus dari resep`);
     } catch (e) {
       window.alert("Gagal menghapus: " + (e.message || "kesalahan server"));
+    } finally {
+      setDeletingKey(null);
     }
   }
 
@@ -271,9 +276,10 @@ export default function ResepManager() {
                             >Ubah</button>
                             <button
                               onClick={() => handleDeleteItem(activeProdukId, d.ID_BAHAN, d.NAMA_BAHAN)}
+                              disabled={deletingKey === d.ID_BAHAN}
                               title="Hapus dari resep"
-                              style={{ padding: "4px 9px", fontSize: 11.5, fontWeight: 600, color: "#d1685c", background: "rgba(209,104,92,0.10)", border: "1px solid rgba(209,104,92,0.32)", borderRadius: 6, cursor: "pointer" }}
-                            >Hapus</button>
+                              style={{ padding: "4px 9px", fontSize: 11.5, fontWeight: 600, color: "#d1685c", background: "rgba(209,104,92,0.10)", border: "1px solid rgba(209,104,92,0.32)", borderRadius: 6, cursor: deletingKey === d.ID_BAHAN ? "wait" : "pointer", opacity: deletingKey === d.ID_BAHAN ? 0.6 : 1 }}
+                            >{deletingKey === d.ID_BAHAN ? "…" : "Hapus"}</button>
                           </div>
                         </td>
                       )}
@@ -365,13 +371,14 @@ function AddProdukModal({ token, onClose, onDone }) {
 
   async function submit() {
     setError(null);
-    if (!nama.trim())         return setError("Nama produk wajib diisi.");
-    if (!(Number(harga) > 0)) return setError("Harga jual harus lebih dari 0.");
+    if (!nama.trim())            return setError("Nama produk wajib diisi.");
+    if (!(Number(harga) > 0))    return setError("Harga jual harus lebih dari 0.");
+    if (!(Number(yieldPcs) > 0)) return setError("Yield harus lebih dari 0.");
     setSaving(true);
     try {
       const res = await createProduk(token, {
         NAMA_PRODUK: nama.trim(), KATEGORI: kategori.trim() || "Lainnya",
-        HARGA_JUAL: Number(harga), YIELD_PCS: Number(yieldPcs) || 1,
+        HARGA_JUAL: Number(harga), YIELD_PCS: Number(yieldPcs),
       });
       onDone(res?.data?.ID_PRODUK, nama.trim());
     } catch (e) {
