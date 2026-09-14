@@ -12,6 +12,8 @@ import {
   createPurchase,
   voidPurchase,
   createSupplier,
+  createBahan,
+  deactivateBahan,
   round2, idr,
 } from "./kcc_data_layer";
 import { Modal, Field, TextInput, Select, Button, FormError, Toast } from "./FormKit";
@@ -23,6 +25,7 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 const UNIT_OPTIONS = ["kg", "gram", "ons", "ltr", "ml", "pack", "pcs", "dus", "karung", "ikat", "papan"];
 const CUSTOM_UNIT = "__lainnya__";
 const NEW_SUPPLIER = "__new__";
+const NEW_BAHAN = "__new_bahan__";
 
 const S = {
   card: {
@@ -496,6 +499,7 @@ export default function PembelianManager() {
           onClose={() => setShowAdd(false)}
           onDone={async (id) => { setShowAdd(false); await reload(); flashToast(`Pembelian ${id} tersimpan`); }}
           onSupplierCreated={reload}
+          onBahanChanged={reload}
         />
       )}
       <Toast show={!!toast}>{toast}</Toast>
@@ -504,8 +508,19 @@ export default function PembelianManager() {
 }
 
 // ─── Add Purchase modal ──────────────────────────────────────────────────────
-function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone, onSupplierCreated }) {
-  const [idBahan, setIdBahan]       = useState(bahanList[0]?.ID_BAHAN || "");
+function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone, onSupplierCreated, onBahanChanged }) {
+  // Bahan yang dibuat dalam sesi modal ini, supaya langsung terpilih tanpa
+  // menunggu reload penuh; bahan yang dihapus (nonaktifkan) disembunyikan
+  // dari pilihan dengan menandainya lokal, walau baru benar-benar hilang
+  // dari daftar master setelah onBahanChanged (reload) selesai.
+  const [extraBahan, setExtraBahan]       = useState([]);
+  const [removedBahanIds, setRemovedBahanIds] = useState([]);
+  const activeBahanList = useMemo(
+    () => [...bahanList, ...extraBahan].filter(b => b.AKTIF !== false && !removedBahanIds.includes(b.ID_BAHAN)),
+    [bahanList, extraBahan, removedBahanIds]
+  );
+
+  const [idBahan, setIdBahan]       = useState(activeBahanList[0]?.ID_BAHAN || "");
   const [idSupplier, setIdSupplier] = useState("");
   const [tanggal, setTanggal]       = useState(todayStr());
   const [qty, setQty]               = useState("");
@@ -514,8 +529,64 @@ function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone, onS
   const [saving, setSaving]         = useState(false);
   const [error, setError]           = useState(null);
 
-  const bahan     = bahanList.find(b => b.ID_BAHAN === idBahan);
+  const bahan     = activeBahanList.find(b => b.ID_BAHAN === idBahan);
   const baseUnit  = bahan?.SATUAN_BELI || "";
+
+  // ── Tambah bahan baru (inline) ──────────────────────────────────────────
+  const [addingBahan, setAddingBahan]   = useState(false);
+  const [savingBahan, setSavingBahan]   = useState(false);
+  const [bahanError, setBahanError]     = useState(null);
+  const [newBahan, setNewBahan] = useState({
+    NAMA_BAHAN: "", SATUAN_BELI: "kg", SATUAN_PAKAI: "gram", KONVERSI: "1000", HARGA_RATA2: "",
+  });
+
+  // ── Hapus (nonaktifkan) bahan dari daftar ───────────────────────────────
+  const [deletingBahan, setDeletingBahan] = useState(false);
+
+  async function saveNewBahan() {
+    setBahanError(null);
+    if (!newBahan.NAMA_BAHAN.trim())          return setBahanError("Nama bahan wajib diisi.");
+    if (!newBahan.SATUAN_BELI.trim())         return setBahanError("Satuan beli wajib diisi.");
+    setSavingBahan(true);
+    try {
+      const payload = {
+        NAMA_BAHAN:   newBahan.NAMA_BAHAN.trim(),
+        SATUAN_BELI:  newBahan.SATUAN_BELI.trim(),
+        SATUAN_PAKAI: newBahan.SATUAN_PAKAI.trim() || newBahan.SATUAN_BELI.trim(),
+        KONVERSI:     Number(newBahan.KONVERSI) || 1,
+        HARGA_RATA2:  Number(newBahan.HARGA_RATA2) || 0,
+      };
+      const res = await createBahan(token, payload);
+      const newId = res?.data?.ID_BAHAN;
+      if (!newId) throw new Error("Server tidak mengembalikan ID bahan.");
+      setExtraBahan(prev => [...prev, { ID_BAHAN: newId, AKTIF: true, ...payload }]);
+      setIdBahan(newId);
+      setAddingBahan(false);
+      setNewBahan({ NAMA_BAHAN: "", SATUAN_BELI: "kg", SATUAN_PAKAI: "gram", KONVERSI: "1000", HARGA_RATA2: "" });
+      onBahanChanged?.(); // sinkronkan daftar master di background, tidak menutup modal
+    } catch (e) {
+      setBahanError(e.message || "Gagal menyimpan bahan.");
+    } finally {
+      setSavingBahan(false);
+    }
+  }
+
+  async function handleDeleteBahan() {
+    if (!bahan) return;
+    if (!window.confirm(`Hapus "${bahan.NAMA_BAHAN}" dari daftar bahan? Bahan hanya disembunyikan (dinonaktifkan), riwayat pembelian lama tetap aman.`)) return;
+    setDeletingBahan(true);
+    try {
+      await deactivateBahan(token, bahan.ID_BAHAN);
+      setRemovedBahanIds(prev => [...prev, bahan.ID_BAHAN]);
+      const next = activeBahanList.find(b => b.ID_BAHAN !== bahan.ID_BAHAN);
+      setIdBahan(next?.ID_BAHAN || "");
+      onBahanChanged?.(); // sinkronkan daftar master di background
+    } catch (e) {
+      window.alert("Gagal menghapus bahan: " + (e.message || "kesalahan server"));
+    } finally {
+      setDeletingBahan(false);
+    }
+  }
 
   // Satuan pembelian aktual (bisa beda dari satuan stok bahan, mis. beli per
   // pack padahal stoknya dihitung per kg). Reset ke satuan dasar tiap ganti bahan.
@@ -548,6 +619,7 @@ function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone, onS
     setKonversi("");
     setCustomUnit("");
     setAddingSupplier(false);
+    setAddingBahan(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idBahan]);
 
@@ -608,6 +680,7 @@ function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone, onS
   async function submit() {
     setError(null);
     if (!idBahan)                    return setError("Pilih bahan.");
+    if (addingBahan)                 return setError("Selesaikan atau batalkan dulu penambahan bahan baru.");
     if (addingSupplier)              return setError("Selesaikan atau batalkan dulu penambahan supplier baru.");
     if (!(qtyNum > 0))               return setError("Qty harus lebih dari 0.");
     if (!(hargaNum > 0))             return setError("Harga beli harus lebih dari 0.");
@@ -641,10 +714,74 @@ function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone, onS
     >
       <FormError>{error}</FormError>
       <Field label="Bahan">
-        <Select value={idBahan} onChange={e => setIdBahan(e.target.value)}>
-          {bahanList.map(b => <option key={b.ID_BAHAN} value={b.ID_BAHAN}>{b.NAMA_BAHAN}</option>)}
-        </Select>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ flex: 1 }}>
+            <Select
+              value={addingBahan ? NEW_BAHAN : idBahan}
+              onChange={e => {
+                const v = e.target.value;
+                if (v === NEW_BAHAN) { setAddingBahan(true); setBahanError(null); return; }
+                setAddingBahan(false);
+                setIdBahan(v);
+              }}
+            >
+              {activeBahanList.map(b => <option key={b.ID_BAHAN} value={b.ID_BAHAN}>{b.NAMA_BAHAN}</option>)}
+              <option value={NEW_BAHAN}>➕ Tambah bahan baru…</option>
+            </Select>
+          </div>
+          {!addingBahan && bahan && (
+            <button
+              type="button"
+              title="Hapus bahan ini dari daftar"
+              onClick={handleDeleteBahan}
+              disabled={deletingBahan}
+              style={{
+                flexShrink: 0, width: 38, height: 38, borderRadius: 8,
+                color: "#d1685c", background: "rgba(209,104,92,0.10)",
+                border: "1px solid rgba(209,104,92,0.35)",
+                cursor: deletingBahan ? "wait" : "pointer", fontSize: 15,
+              }}
+            >
+              {deletingBahan ? "…" : "🗑"}
+            </button>
+          )}
+        </div>
       </Field>
+
+      {addingBahan && (
+        <div style={{
+          marginBottom: 14, padding: 14, borderRadius: 10,
+          background: "#26251f", border: "1px solid #3a3834",
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#c96442", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Bahan Baru
+          </div>
+          <FormError>{bahanError}</FormError>
+          <Field label="Nama Bahan">
+            <TextInput value={newBahan.NAMA_BAHAN} onChange={e => setNewBahan(s => ({ ...s, NAMA_BAHAN: e.target.value }))} placeholder="mis. Daging Sapi" />
+          </Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Satuan Beli" hint="Satuan dasar untuk stok, mis. kg / ltr">
+              <TextInput value={newBahan.SATUAN_BELI} onChange={e => setNewBahan(s => ({ ...s, SATUAN_BELI: e.target.value }))} placeholder="kg" />
+            </Field>
+            <Field label="Satuan Pakai" hint="Satuan dipakai di resep, mis. gram / ml">
+              <TextInput value={newBahan.SATUAN_PAKAI} onChange={e => setNewBahan(s => ({ ...s, SATUAN_PAKAI: e.target.value }))} placeholder="gram" />
+            </Field>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Konversi" hint={`1 ${newBahan.SATUAN_BELI || "satuan beli"} = ? ${newBahan.SATUAN_PAKAI || "satuan pakai"}`}>
+              <TextInput type="number" min="0" step="any" value={newBahan.KONVERSI} onChange={e => setNewBahan(s => ({ ...s, KONVERSI: e.target.value }))} placeholder="1000" />
+            </Field>
+            <Field label="Harga Awal (opsional)">
+              <TextInput type="number" min="0" step="any" value={newBahan.HARGA_RATA2} onChange={e => setNewBahan(s => ({ ...s, HARGA_RATA2: e.target.value }))} placeholder="0" />
+            </Field>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Button variant="ghost" onClick={() => { setAddingBahan(false); setIdBahan(activeBahanList[0]?.ID_BAHAN || ""); }}>Batal</Button>
+            <Button onClick={saveNewBahan} loading={savingBahan}>Simpan Bahan</Button>
+          </div>
+        </div>
+      )}
 
       <Field label="Supplier" hint={supplierOptions.length === 0 ? "Belum ada supplier untuk bahan ini — tambahkan lewat menu di bawah" : undefined}>
         <Select value={addingSupplier ? NEW_SUPPLIER : idSupplier} onChange={e => onPickSupplier(e.target.value)}>
