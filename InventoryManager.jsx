@@ -5,10 +5,12 @@ import {
   STOK_BAHAN,
   RESEP,
   PENJUALAN_HARI_INI,
+  PEMBELIAN_DATA,
   fetchBahan,
   fetchStok,
   fetchResep,
   fetchDashboard,
+  fetchPembelian,
   createBahan,
   adjustStok,
   round2, idr,
@@ -61,6 +63,7 @@ export default function InventoryManager() {
   const [stokBahan,    setStokBahan]    = useState(STOK_BAHAN);
   const [resepData,    setResepData]    = useState(RESEP);
   const [penjualan,    setPenjualan]    = useState(PENJUALAN_HARI_INI);
+  const [pembelianList, setPembelianList] = useState(PEMBELIAN_DATA);
 
   const [showAdd, setShowAdd]   = useState(false);
   const [adjustRow, setAdjustRow] = useState(null); // bahan row being adjusted
@@ -69,13 +72,14 @@ export default function InventoryManager() {
 
   const reload = useCallback(async () => {
     if (!token) return;
-    const [bahanData, stokData, resepRes, dashData] = await Promise.all([
-      fetchBahan(token), fetchStok(token), fetchResep(token), fetchDashboard(token),
+    const [bahanData, stokData, resepRes, dashData, pembelianData] = await Promise.all([
+      fetchBahan(token), fetchStok(token), fetchResep(token), fetchDashboard(token), fetchPembelian(token),
     ]);
     if (bahanData)           setBahanList(bahanData);
     if (stokData)            setStokBahan(stokData);
     if (resepRes)            setResepData(resepRes);
     if (dashData?.penjualan) setPenjualan(dashData.penjualan);
+    if (pembelianData)       setPembelianList(pembelianData);
   }, [token]);
 
   useEffect(() => { reload(); }, [reload]);
@@ -349,6 +353,8 @@ export default function InventoryManager() {
       {showAdd && (
         <AddBahanModal
           token={token}
+          bahanList={bahanList}
+          pembelianList={pembelianList}
           onClose={() => setShowAdd(false)}
           onDone={async (nama) => { setShowAdd(false); await reload(); flashToast(`Bahan "${nama}" ditambahkan`); }}
         />
@@ -368,16 +374,107 @@ export default function InventoryManager() {
 }
 
 // ─── Add Bahan modal ─────────────────────────────────────────────────────────
-function AddBahanModal({ token, onClose, onDone }) {
+// Satuan & konversi disarankan dari pola bahan yang sudah ada (yang pada
+// dasarnya terbentuk dari kebiasaan pembelian), dan harga disarankan dari
+// riwayat transaksi Pembelian bila nama bahan cocok dengan bahan yang pernah
+// tercatat (termasuk yang sudah dinonaktifkan) — user tetap bisa mengubahnya.
+function AddBahanModal({ token, bahanList = [], pembelianList = [], onClose, onDone }) {
   const [nama, setNama]           = useState("");
   const [satuanBeli, setSatuanBeli]   = useState("kg");
   const [satuanPakai, setSatuanPakai] = useState("gram");
   const [konversi, setKonversi]   = useState("1000");
+  const [konversiTouched, setKonversiTouched] = useState(false);
   const [harga, setHarga]         = useState("");
   const [stok, setStok]           = useState("");
   const [minStok, setMinStok]     = useState("");
   const [saving, setSaving]       = useState(false);
   const [error, setError]         = useState(null);
+  const [appliedSuggestion, setAppliedSuggestion] = useState(false);
+
+  // Satuan yang sudah pernah dipakai di data bahan (yaitu satuan yang benar-benar
+  // dipakai lewat transaksi pembelian) — ditawarkan lewat datalist supaya input
+  // konsisten, bukan diketik bebas.
+  const unitOptions = useMemo(() => {
+    const beli = new Set(), pakai = new Set();
+    bahanList.forEach(b => {
+      if (b.SATUAN_BELI)  beli.add(b.SATUAN_BELI.trim());
+      if (b.SATUAN_PAKAI) pakai.add(b.SATUAN_PAKAI.trim());
+    });
+    return { beli: [...beli].sort(), pakai: [...pakai].sort() };
+  }, [bahanList]);
+
+  // Konversi yang paling sering dipakai untuk pasangan satuan beli→pakai
+  // tertentu (mis. kg→gram biasanya 1000), dihitung dari bahan yang sudah ada.
+  const konversiByPair = useMemo(() => {
+    const freq = {};
+    bahanList.forEach(b => {
+      if (!b.SATUAN_BELI || !b.SATUAN_PAKAI || !b.KONVERSI) return;
+      const key = `${b.SATUAN_BELI.trim().toLowerCase()}→${b.SATUAN_PAKAI.trim().toLowerCase()}`;
+      (freq[key] ??= {})[b.KONVERSI] = (freq[key]?.[b.KONVERSI] || 0) + 1;
+    });
+    const best = {};
+    Object.entries(freq).forEach(([key, counts]) => {
+      let bestVal = null, bestCount = 0;
+      Object.entries(counts).forEach(([val, c]) => { if (c > bestCount) { bestCount = c; bestVal = Number(val); } });
+      best[key] = bestVal;
+    });
+    return best;
+  }, [bahanList]);
+
+  const pairKey = `${satuanBeli.trim().toLowerCase()}→${satuanPakai.trim().toLowerCase()}`;
+  const konversiSuggested = konversiByPair[pairKey];
+
+  // Auto-isi konversi saat pasangan satuan cocok dengan pola bahan lain —
+  // hanya jika user belum mengetik konversi manual sendiri.
+  useEffect(() => {
+    if (konversiTouched) return;
+    if (konversiSuggested != null && String(konversiSuggested) !== konversi) {
+      setKonversi(String(konversiSuggested));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pairKey, konversiSuggested, konversiTouched]);
+
+  // Rata-rata & harga terakhir per bahan, dihitung dari histori Pembelian
+  // berstatus Diterima (tertimbang qty), supaya harga mencerminkan realisasi
+  // pembelian, bukan angka manual.
+  const hargaStatsByBahan = useMemo(() => {
+    const acc = {};
+    pembelianList.forEach(p => {
+      if (p.STATUS !== "Diterima") return;
+      const s = (acc[p.ID_BAHAN] ??= { totalRp: 0, totalQty: 0, count: 0, last: null, lastDate: "" });
+      s.totalRp  += (p.HARGA_BELI || 0) * (p.QTY || 0);
+      s.totalQty += (p.QTY || 0);
+      s.count    += 1;
+      if (p.TANGGAL >= s.lastDate) { s.lastDate = p.TANGGAL; s.last = p.HARGA_BELI; }
+    });
+    const out = {};
+    Object.entries(acc).forEach(([id, s]) => {
+      out[id] = { rataRata: s.totalQty > 0 ? round2(s.totalRp / s.totalQty) : 0, terakhir: s.last, jumlah: s.count };
+    });
+    return out;
+  }, [pembelianList]);
+
+  // Cocokkan nama yang sedang diketik dengan bahan yang sudah pernah tercatat
+  // (termasuk yang nonaktif) — bahan yang sama biasanya dibeli dengan
+  // satuan/konversi/harga yang konsisten.
+  const historyMatch = useMemo(() => {
+    const nm = nama.trim().toLowerCase();
+    if (nm.length < 2) return null;
+    const match = bahanList.find(b => b.NAMA_BAHAN?.trim().toLowerCase() === nm);
+    if (!match) return null;
+    const stats = hargaStatsByBahan[match.ID_BAHAN];
+    return { bahan: match, stats: stats || null };
+  }, [nama, bahanList, hargaStatsByBahan]);
+
+  function applyHistorySuggestion() {
+    if (!historyMatch) return;
+    const { bahan, stats } = historyMatch;
+    setSatuanBeli(bahan.SATUAN_BELI || satuanBeli);
+    setSatuanPakai(bahan.SATUAN_PAKAI || satuanPakai);
+    if (bahan.KONVERSI) { setKonversi(String(bahan.KONVERSI)); setKonversiTouched(true); }
+    if (stats?.rataRata) setHarga(String(stats.rataRata));
+    setAppliedSuggestion(true);
+  }
 
   async function submit() {
     setError(null);
@@ -412,14 +509,67 @@ function AddBahanModal({ token, onClose, onDone }) {
     >
       <FormError>{error}</FormError>
       <Field label="Nama Bahan">
-        <TextInput value={nama} onChange={e => setNama(e.target.value)} placeholder="Contoh: Daging Sapi" autoFocus />
+        <TextInput value={nama} onChange={e => { setNama(e.target.value); setAppliedSuggestion(false); }} placeholder="Contoh: Daging Sapi" autoFocus />
       </Field>
+
+      {historyMatch && !appliedSuggestion && (
+        <div style={{
+          marginBottom: 14, padding: "10px 12px", borderRadius: 8,
+          background: "rgba(127,168,106,0.10)", border: "1px solid rgba(127,168,106,0.32)",
+          fontSize: 12, color: "#a9c46a", display: "flex", justifyContent: "space-between",
+          alignItems: "center", gap: 10, flexWrap: "wrap",
+        }}>
+          <span>
+            📊 "{historyMatch.bahan.NAMA_BAHAN}" sudah pernah tercatat — {historyMatch.bahan.SATUAN_BELI}/{historyMatch.bahan.SATUAN_PAKAI},
+            konversi {historyMatch.bahan.KONVERSI}
+            {historyMatch.stats?.rataRata ? `, rata-rata ${idr(historyMatch.stats.rataRata)}/${historyMatch.bahan.SATUAN_BELI} (${historyMatch.stats.jumlah}x beli)` : ""}.
+          </span>
+          <button
+            type="button" onClick={applyHistorySuggestion}
+            style={{
+              flexShrink: 0, padding: "4px 10px", fontSize: 11.5, fontWeight: 700,
+              color: "#7fa86a", background: "rgba(127,168,106,0.14)",
+              border: "1px solid rgba(127,168,106,0.4)", borderRadius: 6, cursor: "pointer",
+            }}
+          >Gunakan data ini</button>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Field label="Satuan Beli"><TextInput value={satuanBeli} onChange={e => setSatuanBeli(e.target.value)} placeholder="kg" /></Field>
-        <Field label="Satuan Pakai"><TextInput value={satuanPakai} onChange={e => setSatuanPakai(e.target.value)} placeholder="gram" /></Field>
-        <Field label="Konversi" hint="1 satuan beli = ? satuan pakai"><TextInput type="number" min="1" step="any" value={konversi} onChange={e => setKonversi(e.target.value)} /></Field>
+        <Field label="Satuan Beli" hint="Dari satuan yang sudah dipakai di pembelian">
+          <TextInput
+            list="kcc-satuan-beli-opts" value={satuanBeli}
+            onChange={e => setSatuanBeli(e.target.value)} placeholder="kg"
+          />
+          <datalist id="kcc-satuan-beli-opts">
+            {unitOptions.beli.map(u => <option key={u} value={u} />)}
+          </datalist>
+        </Field>
+        <Field label="Satuan Pakai" hint="Dari satuan yang sudah dipakai di resep">
+          <TextInput
+            list="kcc-satuan-pakai-opts" value={satuanPakai}
+            onChange={e => setSatuanPakai(e.target.value)} placeholder="gram"
+          />
+          <datalist id="kcc-satuan-pakai-opts">
+            {unitOptions.pakai.map(u => <option key={u} value={u} />)}
+          </datalist>
+        </Field>
+        <Field
+          label="Konversi"
+          hint={konversiSuggested != null && !konversiTouched
+            ? `Disarankan dari pola pembelian bahan lain (${satuanBeli}→${satuanPakai})`
+            : "1 satuan beli = ? satuan pakai"}
+        >
+          <TextInput
+            type="number" min="1" step="any" value={konversi}
+            onChange={e => { setKonversi(e.target.value); setKonversiTouched(true); }}
+          />
+        </Field>
       </div>
-      <Field label="Harga Rata-rata / satuan beli">
+      <Field
+        label="Harga Rata-rata / satuan beli"
+        hint={historyMatch?.stats?.rataRata ? "Bisa disamakan dengan rata-rata harga pembelian di atas" : undefined}
+      >
         <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} placeholder="0" />
       </Field>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
