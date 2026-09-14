@@ -305,8 +305,9 @@ export const adjustStok     = (token, data) => gasRun("apiInvAdjustment", { toke
 export const recordSale     = (token, data) => gasRun("apiInvSalesCreate", { token, data });
 
 // ── Master: Bahan ──────────────────────────────────────────
-export const createBahan = (token, data) => gasRun("apiBahanCreate", { token, data });
-export const updateBahan = (token, data) => gasRun("apiBahanUpdate", { token, data });
+export const createBahan     = (token, data)    => gasRun("apiBahanCreate", { token, data });
+export const updateBahan     = (token, data)    => gasRun("apiBahanUpdate", { token, data });
+export const deactivateBahan = (token, ID_BAHAN) => gasRun("apiBahanDeactivate", { token, ID_BAHAN });
 
 // ── Master: Produk ─────────────────────────────────────────
 export const createProduk = (token, data) => gasRun("apiProdukCreate", { token, data });
