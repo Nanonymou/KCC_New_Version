@@ -12,6 +12,7 @@ import {
   createPurchase,
   voidPurchase,
   createSupplier,
+  deactivateSupplier,
   createBahan,
   deactivateBahan,
   round2, idr,
@@ -105,6 +106,25 @@ export default function PembelianManager() {
     }
   }
 
+  // Hapus (nonaktifkan) supplier secara manual — berlaku untuk supplier bahan
+  // apa pun, dari mana pun ia dipanggil. Supplier hanya disembunyikan, bukan
+  // dihapus permanen, supaya riwayat PO lama tetap menunjukkan nama supplier.
+  // Daftar supplier disinkronkan ulang lewat reload() setelah berhasil.
+  const [deletingSupplierId, setDeletingSupplierId] = useState(null);
+  async function handleDeleteSupplier(id, nama) {
+    if (!window.confirm(`Hapus supplier "${nama || id}"? Supplier hanya disembunyikan (dinonaktifkan) — riwayat PO lama tetap aman.`)) return;
+    setDeletingSupplierId(id);
+    try {
+      await deactivateSupplier(token, id);
+      await reload();
+      flashToast(`Supplier "${nama || id}" dihapus`);
+    } catch (e) {
+      window.alert("Gagal menghapus supplier: " + (e.message || "kesalahan server"));
+    } finally {
+      setDeletingSupplierId(null);
+    }
+  }
+
   const bahanMap = useMemo(() => {
     const m = {};
     bahanList.forEach(b => { m[b.ID_BAHAN] = b; });
@@ -116,6 +136,14 @@ export default function PembelianManager() {
     supplierList.forEach(s => { m[s.ID_SUPPLIER] = s; });
     return m;
   }, [supplierList]);
+
+  // Supplier yang masih aktif — dipakai untuk daftar & pemilihan supplier.
+  // supplierList (semua, termasuk yang sudah dihapus) tetap dipakai di
+  // supplierMap di atas supaya histori PO lama tetap menampilkan nama supplier.
+  const activeSupplierList = useMemo(
+    () => supplierList.filter(s => s.AKTIF !== false),
+    [supplierList]
+  );
 
   const stokMap = useMemo(() => {
     const m = {};
@@ -169,14 +197,14 @@ export default function PembelianManager() {
       .map(s => {
         const bahan = bahanMap[s.ID_BAHAN];
         const kebutuhan = round2(s.MIN_STOK * 1.5 - s.STOK); // pesan sampai 1.5x min
-        // Supplier termurah untuk bahan ini
-        const suppliers = supplierList.filter(sup => sup.ID_BAHAN === s.ID_BAHAN)
+        // Supplier termurah untuk bahan ini (hanya supplier aktif)
+        const suppliers = activeSupplierList.filter(sup => sup.ID_BAHAN === s.ID_BAHAN)
           .sort((a, b) => a.HARGA - b.HARGA);
         const best = suppliers[0];
         const estimasiHarga = best ? round2(kebutuhan * best.HARGA) : null;
         return { ...s, BAHAN: bahan, KEBUTUHAN: kebutuhan, BEST_SUPPLIER: best, ESTIMASI_HARGA: estimasiHarga };
       }),
-    [stokBahan, bahanMap, supplierList]
+    [stokBahan, bahanMap, activeSupplierList]
   );
 
   const tabStyle = (active) => ({
@@ -388,18 +416,18 @@ export default function PembelianManager() {
           {/* Daftar Supplier */}
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "14px 20px", borderBottom: "1px solid #3a3834" }}>
-              <div style={S.label}>Daftar Supplier ({supplierList.length})</div>
+              <div style={S.label}>Daftar Supplier ({activeSupplierList.length})</div>
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Supplier", "Bahan", "Harga/Satuan", "Lead Time", "Rating"].map(h => (
+                  {["Supplier", "Bahan", "Harga/Satuan", "Lead Time", "Rating", ...(canWrite ? ["Aksi"] : [])].map(h => (
                     <th key={h} style={S.th}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {supplierList.map((s, i) => {
+                {activeSupplierList.map((s, i) => {
                   const bahan = bahanMap[s.ID_BAHAN];
                   const stars = "★".repeat(Math.round(s.RATING)) + "☆".repeat(5 - Math.round(s.RATING));
                   return (
@@ -419,11 +447,33 @@ export default function PembelianManager() {
                         <span style={{ color: "#d99a4e", letterSpacing: 1 }}>{stars}</span>
                         <span style={{ color: "#8a857b", fontSize: 11, marginLeft: 4 }}>{s.RATING}</span>
                       </td>
+                      {canWrite && (
+                        <td style={S.td}>
+                          <button
+                            onClick={() => handleDeleteSupplier(s.ID_SUPPLIER, s.NAMA)}
+                            disabled={deletingSupplierId === s.ID_SUPPLIER}
+                            title="Hapus supplier ini (berlaku untuk bahan manapun)"
+                            style={{
+                              padding: "4px 10px", fontSize: 11.5, fontWeight: 600,
+                              color: "#d1685c", background: "rgba(209,104,92,0.10)",
+                              border: "1px solid rgba(209,104,92,0.35)", borderRadius: 6,
+                              cursor: deletingSupplierId === s.ID_SUPPLIER ? "wait" : "pointer",
+                            }}
+                          >
+                            {deletingSupplierId === s.ID_SUPPLIER ? "…" : "Hapus"}
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+            {activeSupplierList.length === 0 && (
+              <div style={{ padding: 32, textAlign: "center", color: "#615d55", fontSize: 13 }}>
+                Belum ada supplier
+              </div>
+            )}
           </Card>
         </div>
       )}
@@ -495,7 +545,7 @@ export default function PembelianManager() {
         <AddPurchaseModal
           token={token}
           bahanList={bahanList}
-          supplierList={supplierList}
+          supplierList={activeSupplierList}
           onClose={() => setShowAdd(false)}
           onDone={async (id) => { setShowAdd(false); await reload(); flashToast(`Pembelian ${id} tersimpan`); }}
           onSupplierCreated={reload}
@@ -595,20 +645,47 @@ function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone, onS
   const [konversi, setKonversi]   = useState(""); // 1 unit pembelian = ? satuan dasar
 
   // Supplier baru yang dibuat dalam sesi modal ini, supaya langsung bisa
-  // dipakai tanpa menunggu reload penuh dari server.
+  // dipakai tanpa menunggu reload penuh dari server. Supplier yang dihapus
+  // (dinonaktifkan) disembunyikan lokal dengan cara yang sama seperti bahan.
   const [extraSuppliers, setExtraSuppliers] = useState([]);
+  const [removedSupplierIds, setRemovedSupplierIds] = useState([]);
   const [addingSupplier, setAddingSupplier] = useState(false);
   const [savingSupplier, setSavingSupplier] = useState(false);
+  const [deletingSupplier, setDeletingSupplier] = useState(false);
   const [supplierError, setSupplierError]   = useState(null);
   const [newSupplier, setNewSupplier] = useState({
     NAMA: "", TELP: "", SATUAN: baseUnit || "kg", HARGA: "", LEAD_TIME: "0", RATING: "5",
   });
 
-  const allSuppliers = useMemo(() => [...supplierList, ...extraSuppliers], [supplierList, extraSuppliers]);
+  const allSuppliers = useMemo(
+    () => [...supplierList, ...extraSuppliers].filter(s => !removedSupplierIds.includes(s.ID_SUPPLIER)),
+    [supplierList, extraSuppliers, removedSupplierIds]
+  );
 
   // Suppliers that carry the chosen bahan (fallback: all suppliers).
   const bahanSuppliers = allSuppliers.filter(s => s.ID_BAHAN === idBahan);
   const supplierOptions = bahanSuppliers.length ? bahanSuppliers : allSuppliers;
+  const selectedSupplier = allSuppliers.find(s => s.ID_SUPPLIER === idSupplier);
+
+  // Hapus supplier secara manual, berlaku untuk bahan apa pun — bukan hanya
+  // bahan yang sedang dipilih di form ini. Supplier hanya dinonaktifkan
+  // supaya riwayat PO lama tetap aman, lalu disinkronkan lewat onSupplierCreated.
+  async function handleDeleteSupplier() {
+    if (!selectedSupplier) return;
+    if (!window.confirm(`Hapus supplier "${selectedSupplier.NAMA}" dari daftar (berlaku untuk semua bahan)? Riwayat pembelian lama tetap aman.`)) return;
+    setDeletingSupplier(true);
+    try {
+      await deactivateSupplier(token, selectedSupplier.ID_SUPPLIER);
+      setRemovedSupplierIds(prev => [...prev, selectedSupplier.ID_SUPPLIER]);
+      const next = supplierOptions.find(s => s.ID_SUPPLIER !== selectedSupplier.ID_SUPPLIER);
+      setIdSupplier(next?.ID_SUPPLIER || "");
+      onSupplierCreated?.(); // sinkronkan daftar master di background
+    } catch (e) {
+      window.alert("Gagal menghapus supplier: " + (e.message || "kesalahan server"));
+    } finally {
+      setDeletingSupplier(false);
+    }
+  }
 
   // Default supplier + auto-fill price + reset satuan when bahan changes.
   useEffect(() => {
@@ -784,11 +861,31 @@ function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone, onS
       )}
 
       <Field label="Supplier" hint={supplierOptions.length === 0 ? "Belum ada supplier untuk bahan ini — tambahkan lewat menu di bawah" : undefined}>
-        <Select value={addingSupplier ? NEW_SUPPLIER : idSupplier} onChange={e => onPickSupplier(e.target.value)}>
-          <option value="">— tanpa supplier —</option>
-          {supplierOptions.map(s => <option key={s.ID_SUPPLIER} value={s.ID_SUPPLIER}>{s.NAMA} · {idr(s.HARGA)}/{s.SATUAN}</option>)}
-          <option value={NEW_SUPPLIER}>➕ Tambah supplier baru…</option>
-        </Select>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ flex: 1 }}>
+            <Select value={addingSupplier ? NEW_SUPPLIER : idSupplier} onChange={e => onPickSupplier(e.target.value)}>
+              <option value="">— tanpa supplier —</option>
+              {supplierOptions.map(s => <option key={s.ID_SUPPLIER} value={s.ID_SUPPLIER}>{s.NAMA} · {idr(s.HARGA)}/{s.SATUAN}</option>)}
+              <option value={NEW_SUPPLIER}>➕ Tambah supplier baru…</option>
+            </Select>
+          </div>
+          {!addingSupplier && selectedSupplier && (
+            <button
+              type="button"
+              title="Hapus supplier ini (berlaku untuk semua bahan)"
+              onClick={handleDeleteSupplier}
+              disabled={deletingSupplier}
+              style={{
+                flexShrink: 0, width: 38, height: 38, borderRadius: 8,
+                color: "#d1685c", background: "rgba(209,104,92,0.10)",
+                border: "1px solid rgba(209,104,92,0.35)",
+                cursor: deletingSupplier ? "wait" : "pointer", fontSize: 15,
+              }}
+            >
+              {deletingSupplier ? "…" : "🗑"}
+            </button>
+          )}
+        </div>
       </Field>
 
       {addingSupplier && (
