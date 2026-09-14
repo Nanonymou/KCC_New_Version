@@ -314,7 +314,10 @@ export const createProduk = (token, data) => gasRun("apiProdukCreate", { token, 
 export const updateProduk = (token, data) => gasRun("apiProdukUpdate", { token, data });
 
 // ── Master: Supplier ───────────────────────────────────────
-export const createSupplier = (token, data) => gasRun("apiSupplierCreate", { token, data });
+export const createSupplier     = (token, data)       => gasRun("apiSupplierCreate", { token, data });
+export const updateSupplier     = (token, data)       => gasRun("apiSupplierUpdate", { token, data });
+export const deactivateSupplier = (token, ID_SUPPLIER) => gasRun("apiSupplierDeactivate", { token, ID_SUPPLIER });
+export const reactivateSupplier = (token, ID_SUPPLIER) => gasRun("apiSupplierReactivate", { token, ID_SUPPLIER });
 
 // ── Resep ──────────────────────────────────────────────────
 export const addResepItem    = (token, data) => gasRun("apiResepAddItem", { token, data });
@@ -397,13 +400,22 @@ export function hitungHPP(produk, resepItems, bahanMap) {
 
 /**
  * Hitung HPP semua produk dari bahanList saat ini.
+ *
+ * `produkList` & `resepDataArg` opsional — default ke data fallback (PRODUK/
+ * RESEP) untuk kompatibilitas dengan pemanggil lama yang hanya mengirim
+ * bahanList. Pemanggil yang sudah fetch data live (mis. ResepManager) WAJIB
+ * mengirim produkList & resepData miliknya sendiri, supaya produk/resep yang
+ * baru ditambahkan (di luar 5 produk contoh) ikut terhitung — sebelumnya
+ * kedua parameter ini diterima tapi diam-diam diabaikan, sehingga produk/
+ * item resep baru tidak pernah muncul di ringkasan HPP walau tersimpan di
+ * server.
  */
-export function recalcSemua(bahanList) {
+export function recalcSemua(bahanList, produkList = PRODUK, resepDataArg = RESEP) {
   const bahanMap = {};
   bahanList.forEach(b => { bahanMap[b.ID_BAHAN] = b; });
 
-  return PRODUK.map(produk => {
-    const resepItems = RESEP.filter(r => r.ID_PRODUK === produk.ID_PRODUK);
+  return produkList.map(produk => {
+    const resepItems = resepDataArg.filter(r => r.ID_PRODUK === produk.ID_PRODUK);
     return hitungHPP(produk, resepItems, bahanMap);
   });
 }
