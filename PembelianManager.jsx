@@ -11,11 +11,18 @@ import {
   fetchPembelian,
   createPurchase,
   voidPurchase,
+  createSupplier,
   round2, idr,
 } from "./kcc_data_layer";
 import { Modal, Field, TextInput, Select, Button, FormError, Toast } from "./FormKit";
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
+
+// Satuan pembelian yang umum dipakai — bahan bisa dibeli dalam satuan lain
+// dari satuan stoknya (mis. stok dalam kg tapi beli per pack/gram/ikat).
+const UNIT_OPTIONS = ["kg", "gram", "ons", "ltr", "ml", "pack", "pcs", "dus", "karung", "ikat", "papan"];
+const CUSTOM_UNIT = "__lainnya__";
+const NEW_SUPPLIER = "__new__";
 
 const S = {
   card: {
@@ -488,6 +495,7 @@ export default function PembelianManager() {
           supplierList={supplierList}
           onClose={() => setShowAdd(false)}
           onDone={async (id) => { setShowAdd(false); await reload(); flashToast(`Pembelian ${id} tersimpan`); }}
+          onSupplierCreated={reload}
         />
       )}
       <Toast show={!!toast}>{toast}</Toast>
@@ -496,7 +504,7 @@ export default function PembelianManager() {
 }
 
 // ─── Add Purchase modal ──────────────────────────────────────────────────────
-function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone }) {
+function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone, onSupplierCreated }) {
   const [idBahan, setIdBahan]       = useState(bahanList[0]?.ID_BAHAN || "");
   const [idSupplier, setIdSupplier] = useState("");
   const [tanggal, setTanggal]       = useState(todayStr());
@@ -506,37 +514,112 @@ function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone }) {
   const [saving, setSaving]         = useState(false);
   const [error, setError]           = useState(null);
 
-  // Suppliers that carry the chosen bahan (fallback: all suppliers).
-  const bahanSuppliers = supplierList.filter(s => s.ID_BAHAN === idBahan);
-  const supplierOptions = bahanSuppliers.length ? bahanSuppliers : supplierList;
+  const bahan     = bahanList.find(b => b.ID_BAHAN === idBahan);
+  const baseUnit  = bahan?.SATUAN_BELI || "";
 
-  // Default supplier + auto-fill price when bahan changes.
+  // Satuan pembelian aktual (bisa beda dari satuan stok bahan, mis. beli per
+  // pack padahal stoknya dihitung per kg). Reset ke satuan dasar tiap ganti bahan.
+  const [unit, setUnit]           = useState(baseUnit || "kg");
+  const [customUnit, setCustomUnit] = useState("");
+  const [konversi, setKonversi]   = useState(""); // 1 unit pembelian = ? satuan dasar
+
+  // Supplier baru yang dibuat dalam sesi modal ini, supaya langsung bisa
+  // dipakai tanpa menunggu reload penuh dari server.
+  const [extraSuppliers, setExtraSuppliers] = useState([]);
+  const [addingSupplier, setAddingSupplier] = useState(false);
+  const [savingSupplier, setSavingSupplier] = useState(false);
+  const [supplierError, setSupplierError]   = useState(null);
+  const [newSupplier, setNewSupplier] = useState({
+    NAMA: "", TELP: "", SATUAN: baseUnit || "kg", HARGA: "", LEAD_TIME: "0", RATING: "5",
+  });
+
+  const allSuppliers = useMemo(() => [...supplierList, ...extraSuppliers], [supplierList, extraSuppliers]);
+
+  // Suppliers that carry the chosen bahan (fallback: all suppliers).
+  const bahanSuppliers = allSuppliers.filter(s => s.ID_BAHAN === idBahan);
+  const supplierOptions = bahanSuppliers.length ? bahanSuppliers : allSuppliers;
+
+  // Default supplier + auto-fill price + reset satuan when bahan changes.
   useEffect(() => {
     const first = supplierOptions[0];
     setIdSupplier(first?.ID_SUPPLIER || "");
     if (first && !harga) setHarga(String(first.HARGA));
+    setUnit(baseUnit || "kg");
+    setKonversi("");
+    setCustomUnit("");
+    setAddingSupplier(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idBahan]);
 
-  const onPickSupplier = (sid) => {
-    setIdSupplier(sid);
-    const sup = supplierList.find(s => s.ID_SUPPLIER === sid);
+  const onPickSupplier = (val) => {
+    if (val === NEW_SUPPLIER) {
+      setAddingSupplier(true);
+      setSupplierError(null);
+      setNewSupplier(s => ({ ...s, SATUAN: (unit === CUSTOM_UNIT ? customUnit : unit) || baseUnit || "kg" }));
+      return;
+    }
+    setAddingSupplier(false);
+    setIdSupplier(val);
+    const sup = allSuppliers.find(s => s.ID_SUPPLIER === val);
     if (sup) setHarga(String(sup.HARGA));
   };
 
-  const bahan = bahanList.find(b => b.ID_BAHAN === idBahan);
-  const total = (Number(qty) || 0) * (Number(harga) || 0);
+  async function saveNewSupplier() {
+    setSupplierError(null);
+    if (!newSupplier.NAMA.trim())          return setSupplierError("Nama supplier wajib diisi.");
+    if (!(Number(newSupplier.HARGA) > 0))  return setSupplierError("Harga wajib diisi.");
+    setSavingSupplier(true);
+    try {
+      const payload = {
+        NAMA:      newSupplier.NAMA.trim(),
+        ID_BAHAN:  idBahan,
+        HARGA:     Number(newSupplier.HARGA),
+        SATUAN:    newSupplier.SATUAN.trim() || baseUnit || "kg",
+        LEAD_TIME: Number(newSupplier.LEAD_TIME) || 0,
+        RATING:    Number(newSupplier.RATING) || 0,
+        TELP:      newSupplier.TELP.trim(),
+      };
+      const res = await createSupplier(token, payload);
+      const newId = res?.data?.ID_SUPPLIER;
+      if (!newId) throw new Error("Server tidak mengembalikan ID supplier.");
+      setExtraSuppliers(prev => [...prev, { ID_SUPPLIER: newId, ...payload }]);
+      setIdSupplier(newId);
+      setHarga(String(payload.HARGA));
+      setAddingSupplier(false);
+      setNewSupplier({ NAMA: "", TELP: "", SATUAN: baseUnit || "kg", HARGA: "", LEAD_TIME: "0", RATING: "5" });
+      onSupplierCreated?.(); // sinkronkan daftar master di background, tidak menutup modal
+    } catch (e) {
+      setSupplierError(e.message || "Gagal menyimpan supplier.");
+    } finally {
+      setSavingSupplier(false);
+    }
+  }
+
+  const effectiveUnit = unit === CUSTOM_UNIT ? customUnit.trim() : unit;
+  const unitIsBase     = !!baseUnit && effectiveUnit === baseUnit;
+  const qtyNum    = Number(qty) || 0;
+  const hargaNum  = Number(harga) || 0;
+  const konversiNum = Number(konversi) || 0;
+  const total     = round2(qtyNum * hargaNum); // total yang benar-benar dibayar, tidak berubah oleh konversi satuan
+  // Qty & harga per satuan dasar bahan — inilah yang dicatat ke stok/HPP.
+  const qtyBase   = unitIsBase ? qtyNum   : round2(qtyNum * konversiNum);
+  const hargaBase = unitIsBase ? hargaNum : (konversiNum > 0 ? round2(hargaNum / konversiNum) : 0);
 
   async function submit() {
     setError(null);
-    if (!idBahan)              return setError("Pilih bahan.");
-    if (!(Number(qty) > 0))    return setError("Qty harus lebih dari 0.");
-    if (!(Number(harga) > 0))  return setError("Harga beli harus lebih dari 0.");
+    if (!idBahan)                    return setError("Pilih bahan.");
+    if (addingSupplier)              return setError("Selesaikan atau batalkan dulu penambahan supplier baru.");
+    if (!(qtyNum > 0))               return setError("Qty harus lebih dari 0.");
+    if (!(hargaNum > 0))             return setError("Harga beli harus lebih dari 0.");
+    if (unit === CUSTOM_UNIT && !customUnit.trim())
+      return setError("Isi nama satuan (mis. karung, botol, lusin).");
+    if (!unitIsBase && !(konversiNum > 0))
+      return setError(`Isi konversi: 1 ${effectiveUnit || "satuan"} = berapa ${baseUnit || "satuan stok"}.`);
     setSaving(true);
     try {
       const res = await createPurchase(token, {
         ID_BAHAN: idBahan, ID_SUPPLIER: idSupplier || null, TANGGAL: tanggal,
-        QTY: Number(qty), HARGA_BELI: Number(harga), TOTAL: total, STATUS: status,
+        QTY: qtyBase, HARGA_BELI: hargaBase, TOTAL: total, STATUS: status,
       });
       onDone(res?.data?.ID_PO || "");
     } catch (e) {
@@ -562,20 +645,86 @@ function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone }) {
           {bahanList.map(b => <option key={b.ID_BAHAN} value={b.ID_BAHAN}>{b.NAMA_BAHAN}</option>)}
         </Select>
       </Field>
-      <Field label="Supplier" hint={supplierOptions.length === 0 ? "Belum ada supplier untuk bahan ini" : undefined}>
-        <Select value={idSupplier} onChange={e => onPickSupplier(e.target.value)}>
+
+      <Field label="Supplier" hint={supplierOptions.length === 0 ? "Belum ada supplier untuk bahan ini — tambahkan lewat menu di bawah" : undefined}>
+        <Select value={addingSupplier ? NEW_SUPPLIER : idSupplier} onChange={e => onPickSupplier(e.target.value)}>
           <option value="">— tanpa supplier —</option>
           {supplierOptions.map(s => <option key={s.ID_SUPPLIER} value={s.ID_SUPPLIER}>{s.NAMA} · {idr(s.HARGA)}/{s.SATUAN}</option>)}
+          <option value={NEW_SUPPLIER}>➕ Tambah supplier baru…</option>
         </Select>
       </Field>
+
+      {addingSupplier && (
+        <div style={{
+          marginBottom: 14, padding: 14, borderRadius: 10,
+          background: "#26251f", border: "1px solid #3a3834",
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#c96442", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Supplier Baru
+          </div>
+          <FormError>{supplierError}</FormError>
+          <Field label="Nama Supplier">
+            <TextInput value={newSupplier.NAMA} onChange={e => setNewSupplier(s => ({ ...s, NAMA: e.target.value }))} placeholder="mis. Toko Sumber Rejeki" />
+          </Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Harga">
+              <TextInput type="number" min="0" step="any" value={newSupplier.HARGA} onChange={e => setNewSupplier(s => ({ ...s, HARGA: e.target.value }))} placeholder="0" />
+            </Field>
+            <Field label="Satuan Harga">
+              <TextInput value={newSupplier.SATUAN} onChange={e => setNewSupplier(s => ({ ...s, SATUAN: e.target.value }))} placeholder="kg / pack / ltr" />
+            </Field>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="Lead Time (hari)">
+              <TextInput type="number" min="0" step="1" value={newSupplier.LEAD_TIME} onChange={e => setNewSupplier(s => ({ ...s, LEAD_TIME: e.target.value }))} />
+            </Field>
+            <Field label="Rating (0–5)">
+              <TextInput type="number" min="0" max="5" step="0.1" value={newSupplier.RATING} onChange={e => setNewSupplier(s => ({ ...s, RATING: e.target.value }))} />
+            </Field>
+          </div>
+          <Field label="Telepon (opsional)">
+            <TextInput value={newSupplier.TELP} onChange={e => setNewSupplier(s => ({ ...s, TELP: e.target.value }))} placeholder="021-xxxxxxx" />
+          </Field>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Button variant="ghost" onClick={() => { setAddingSupplier(false); setIdSupplier(""); }}>Batal</Button>
+            <Button onClick={saveNewSupplier} loading={savingSupplier}>Simpan Supplier</Button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label={`Qty (${bahan?.SATUAN_BELI || "satuan"})`}>
+        <Field label="Qty">
           <TextInput type="number" min="0" step="any" value={qty} onChange={e => setQty(e.target.value)} placeholder="0" />
         </Field>
-        <Field label="Harga Beli / satuan">
-          <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} placeholder="0" />
+        <Field label="Satuan Beli">
+          <Select value={unit} onChange={e => setUnit(e.target.value)}>
+            {[...new Set([baseUnit, ...UNIT_OPTIONS].filter(Boolean))].map(u => (
+              <option key={u} value={u}>{u}</option>
+            ))}
+            <option value={CUSTOM_UNIT}>Lainnya…</option>
+          </Select>
         </Field>
       </div>
+
+      {unit === CUSTOM_UNIT && (
+        <Field label="Nama Satuan Lainnya">
+          <TextInput value={customUnit} onChange={e => setCustomUnit(e.target.value)} placeholder="mis. karung, botol, lusin" />
+        </Field>
+      )}
+
+      {!unitIsBase && (
+        <Field
+          label={`Konversi ke satuan stok (1 ${effectiveUnit || "satuan"} = ? ${baseUnit || "satuan stok"})`}
+          hint="Dipakai untuk menghitung penambahan stok & harga per satuan dasar bahan."
+        >
+          <TextInput type="number" min="0" step="any" value={konversi} onChange={e => setKonversi(e.target.value)} placeholder="mis. 0.25" />
+        </Field>
+      )}
+
+      <Field label={`Harga Beli / ${effectiveUnit || baseUnit || "satuan"}`}>
+        <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} placeholder="0" />
+      </Field>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Tanggal">
           <TextInput type="date" value={tanggal} onChange={e => setTanggal(e.target.value)} />
@@ -587,6 +736,14 @@ function AddPurchaseModal({ token, bahanList, supplierList, onClose, onDone }) {
           </Select>
         </Field>
       </div>
+
+      {!unitIsBase && konversiNum > 0 && qtyNum > 0 && (
+        <div style={{ fontSize: 11.5, color: "#8a857b", marginTop: -6, marginBottom: 10 }}>
+          Akan tercatat ke stok: <b style={{ color: "#a9a49a" }}>{qtyBase} {baseUnit}</b>
+          {" "}· harga {idr(hargaBase)}/{baseUnit}
+        </div>
+      )}
+
       <div style={{
         marginTop: 4, padding: "10px 13px", borderRadius: 8,
         background: "rgba(201,100,66,0.10)", border: "1px solid rgba(201,100,66,0.28)",
