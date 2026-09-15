@@ -168,8 +168,10 @@ export const deactivateBahan = (token, ID_BAHAN) => gasRun("apiBahanDeactivate",
 export const reactivateBahan = (token, ID_BAHAN) => gasRun("apiBahanReactivate", { token, ID_BAHAN });
 
 // ── Master: Produk ─────────────────────────────────────────
-export const createProduk = (token, data) => gasRun("apiProdukCreate", { token, data });
-export const updateProduk = (token, data) => gasRun("apiProdukUpdate", { token, data });
+export const createProduk     = (token, data)     => gasRun("apiProdukCreate", { token, data });
+export const updateProduk     = (token, data)     => gasRun("apiProdukUpdate", { token, data });
+export const deactivateProduk = (token, ID_PRODUK) => gasRun("apiProdukDeactivate", { token, ID_PRODUK });
+export const reactivateProduk = (token, ID_PRODUK) => gasRun("apiProdukReactivate", { token, ID_PRODUK });
 
 // ── Master: Supplier ───────────────────────────────────────
 export const createSupplier     = (token, data)       => gasRun("apiSupplierCreate", { token, data });
