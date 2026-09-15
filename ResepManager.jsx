@@ -11,6 +11,8 @@ import {
   updateResepItem,
   deleteResepItem,
   createProduk,
+  deactivateProduk,
+  reactivateProduk,
   recalcSemua,
   round2, idr, pct, marginColor,
 } from "./kcc_data_layer";
@@ -78,6 +80,8 @@ export default function ResepManager() {
 
   const [selectedProduk, setSelectedProduk] = useState(null);
   const [deletingKey, setDeletingKey] = useState(null);
+  const [deletingProdukId, setDeletingProdukId] = useState(null);
+  const [showInactiveProduk, setShowInactiveProduk] = useState(false);
 
   async function handleDeleteItem(idProduk, idBahan, nama) {
     if (deletingKey === idBahan) return; // already in flight
@@ -94,8 +98,45 @@ export default function ResepManager() {
     }
   }
 
+  // Hapus (nonaktifkan) seluruh resep/produk — bukan cuma satu bahan.
+  // Produk hanya disembunyikan, bukan dihapus permanen, supaya riwayat
+  // penjualan lama & data HPP historis tetap aman. Bisa dipulihkan lagi
+  // lewat "Produk Nonaktif".
+  async function handleDeleteProduk(p) {
+    if (!window.confirm(`Hapus resep "${p.NAMA_PRODUK}"? Produk & seluruh komposisi resepnya hanya disembunyikan (dinonaktifkan) — bisa dipulihkan lagi lewat "Produk Nonaktif".`)) return;
+    setDeletingProdukId(p.ID_PRODUK);
+    try {
+      await deactivateProduk(token, p.ID_PRODUK);
+      if (selectedProduk === p.ID_PRODUK) setSelectedProduk(null);
+      await reload();
+      flashToast(`Resep "${p.NAMA_PRODUK}" dihapus`);
+    } catch (e) {
+      window.alert("Gagal menghapus resep: " + (e.message || "kesalahan server"));
+    } finally {
+      setDeletingProdukId(null);
+    }
+  }
+
+  async function handleReactivateProduk(p) {
+    setDeletingProdukId(p.ID_PRODUK);
+    try {
+      await reactivateProduk(token, p.ID_PRODUK);
+      await reload();
+      flashToast(`Resep "${p.NAMA_PRODUK}" diaktifkan kembali`);
+    } catch (e) {
+      window.alert("Gagal mengaktifkan resep: " + (e.message || "kesalahan server"));
+    } finally {
+      setDeletingProdukId(null);
+    }
+  }
+
+  // Produk yang dihapus disimpan sebagai nonaktif (active=false) — daftar
+  // & pemilihan produk aktif selalu memakai yang aktif saja.
+  const activeProdukList   = useMemo(() => produkList.filter(p => p.AKTIF !== false), [produkList]);
+  const inactiveProdukList = useMemo(() => produkList.filter(p => p.AKTIF === false), [produkList]);
+
   // Set default selection once produkList is available
-  const activeProdukId = selectedProduk ?? produkList[0]?.ID_PRODUK ?? null;
+  const activeProdukId = selectedProduk ?? activeProdukList[0]?.ID_PRODUK ?? null;
 
   const bahanMap = useMemo(() => {
     const m = {};
@@ -118,7 +159,7 @@ export default function ResepManager() {
   const selected    = produkList.find(p => p.ID_PRODUK === activeProdukId);
   const selectedHPP = hppMap[activeProdukId];
 
-  const filteredProduk = produkList.filter(p =>
+  const filteredProduk = activeProdukList.filter(p =>
     p.NAMA_PRODUK.toLowerCase().includes(searchQ.toLowerCase()) ||
     p.KATEGORI.toLowerCase().includes(searchQ.toLowerCase())
   );
@@ -148,7 +189,22 @@ export default function ResepManager() {
         {/* Left: Daftar Produk */}
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ padding: "14px 16px", borderBottom: "1px solid #3a3834" }}>
-            <div style={S.label}>Produk ({produkList.length})</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={S.label}>Produk ({activeProdukList.length})</div>
+              {inactiveProdukList.length > 0 && (
+                <button
+                  onClick={() => setShowInactiveProduk(v => !v)}
+                  style={{
+                    fontSize: 10.5, fontWeight: 600, cursor: "pointer",
+                    color: showInactiveProduk ? "#c96442" : "#78746b",
+                    background: "transparent", border: "none", padding: 0,
+                    textDecoration: "underline", textUnderlineOffset: 2,
+                  }}
+                >
+                  🗑 Nonaktif ({inactiveProdukList.length})
+                </button>
+              )}
+            </div>
             <input
               type="text"
               placeholder="Cari produk..."
@@ -199,6 +255,37 @@ export default function ResepManager() {
               Produk tidak ditemukan
             </div>
           )}
+          {showInactiveProduk && inactiveProdukList.length > 0 && (
+            <div style={{ borderTop: "1px solid #3a3834" }}>
+              <div style={{ padding: "10px 16px 4px", fontSize: 10.5, fontWeight: 700, color: "#615d55", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                Produk Nonaktif
+              </div>
+              {inactiveProdukList.map(p => (
+                <div key={p.ID_PRODUK} style={{
+                  padding: "10px 16px", borderBottom: "1px solid #3a3834",
+                  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+                }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: "#8a857b" }}>{p.NAMA_PRODUK}</div>
+                    <div style={{ fontSize: 11, color: "#615d55", marginTop: 2 }}>{p.KATEGORI}</div>
+                  </div>
+                  {canWrite && (
+                    <button
+                      onClick={() => handleReactivateProduk(p)}
+                      disabled={deletingProdukId === p.ID_PRODUK}
+                      style={{
+                        flexShrink: 0, padding: "4px 9px", fontSize: 11, fontWeight: 600,
+                        color: "#7fa86a", background: "rgba(127,168,106,0.10)",
+                        border: "1px solid rgba(127,168,106,0.32)", borderRadius: 6,
+                        cursor: deletingProdukId === p.ID_PRODUK ? "default" : "pointer",
+                        opacity: deletingProdukId === p.ID_PRODUK ? 0.6 : 1,
+                      }}
+                    >Aktifkan</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
 
         {/* Right: Detail Resep */}
@@ -236,7 +323,21 @@ export default function ResepManager() {
                   <div style={{ fontSize: 18, fontWeight: 800, color: "#c96442" }}>{idr(totalBiayaResep)}</div>
                 </div>
                 {canWrite && selected && (
-                  <Button onClick={() => setShowAddItem(true)}>＋ Tambah Bahan</Button>
+                  <>
+                    <Button onClick={() => setShowAddItem(true)}>＋ Tambah Bahan</Button>
+                    <button
+                      onClick={() => handleDeleteProduk(selected)}
+                      disabled={deletingProdukId === selected.ID_PRODUK}
+                      title="Hapus resep ini"
+                      style={{
+                        padding: "8px 14px", fontSize: 13, fontWeight: 600,
+                        color: "#d1685c", background: "rgba(209,104,92,0.10)",
+                        border: "1px solid rgba(209,104,92,0.32)", borderRadius: 8,
+                        cursor: deletingProdukId === selected.ID_PRODUK ? "wait" : "pointer",
+                        opacity: deletingProdukId === selected.ID_PRODUK ? 0.6 : 1,
+                      }}
+                    >{deletingProdukId === selected.ID_PRODUK ? "…" : "🗑 Hapus Resep"}</button>
+                  </>
                 )}
               </div>
             </div>
