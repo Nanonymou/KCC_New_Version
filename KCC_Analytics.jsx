@@ -3,15 +3,12 @@ import { useAuth } from "./AuthContext";
 import {
   INITIAL_BAHAN,
   PRODUK,
+  RESEP,
   PENJUALAN_HARI_INI,
-  BULAN_LABELS,
-  TREND_HARGA_BAHAN,
-  TREND_HPP,
-  TREND_MARGIN,
-  TREND_FOOD_COST,
   SUPPLIER_DATA,
   fetchBahan,
   fetchProduk,
+  fetchResep,
   fetchSupplier,
   fetchDashboard,
   recalcSemua,
@@ -19,8 +16,8 @@ import {
 } from "./kcc_data_layer";
 
 // ─── ANALYTICS SERVICE ─────────────────────────────────────────
-function getAnalyticsData(bahanList, produkList, penjualanHariIni, supplierList) {
-  const produkHPP = recalcSemua(bahanList);
+function getAnalyticsData(bahanList, produkList, resepData, penjualanHariIni, supplierList) {
+  const produkHPP = recalcSemua(bahanList, produkList, resepData);
   const jualMap = {};
   penjualanHariIni.forEach(j => { jualMap[j.ID_PRODUK] = j.QTY; });
   const bahanMap = {};
@@ -297,231 +294,6 @@ function TabBar({ tabs, active, onChange }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// SECTION: TREND HARGA BAHAN
-// ═══════════════════════════════════════════════════════════════
-function TrendHargaBahan({ bahanList }) {
-  const BAHAN_PILIHAN = [
-    { id: "B001", nama: "Ayam Potong",   color: "#c96442" },
-    { id: "B002", nama: "Tepung Terigu", color: "#6ea3c4" },
-    { id: "B003", nama: "Minyak Goreng", color: "#a98bbf" },
-    { id: "B004", nama: "Bawang Putih",  color: "#7fa86a" },
-    { id: "B008", nama: "Cabai Merah",   color: "#d1685c" },
-  ];
-  const [selected, setSelected] = useState(["B001", "B008"]);
-
-  const toggle = id => setSelected(prev =>
-    prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-  );
-
-  const activeSeries = BAHAN_PILIHAN
-    .filter(b => selected.includes(b.id) && TREND_HARGA_BAHAN[b.id])
-    .map(b => ({ label: b.nama, data: TREND_HARGA_BAHAN[b.id], color: b.color }));
-
-  const yFmt = v => `${(v / 1000).toFixed(0)}k`;
-
-  // Hitung kenaikan per bahan
-  const kenaikan = BAHAN_PILIHAN.map(b => {
-    const arr = TREND_HARGA_BAHAN[b.id] || [];
-    const first = arr[0] || 0;
-    const last  = arr[arr.length - 1] || 0;
-    const pctKenaikan = first > 0 ? round2(((last - first) / first) * 100) : 0;
-    return { ...b, PERTAMA: first, TERAKHIR: last, PCT: pctKenaikan };
-  });
-
-  return (
-    <Card>
-      <SectionTitle accent="#c96442">📈 Trend Harga Bahan (6 Bulan)</SectionTitle>
-
-      {/* Toggle bahan */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
-        {BAHAN_PILIHAN.map(b => (
-          <button key={b.id} onClick={() => toggle(b.id)} style={{
-            border: `1px solid ${selected.includes(b.id) ? b.color : "#3a3834"}`,
-            background: selected.includes(b.id) ? b.color + "22" : "transparent",
-            color: selected.includes(b.id) ? b.color : "#78746b",
-            padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer",
-          }}>{b.nama}</button>
-        ))}
-      </div>
-
-      {activeSeries.length > 0 ? (
-        <>
-          <LineChart
-            series={activeSeries}
-            labels={BULAN_LABELS}
-            colors={activeSeries.map(s => s.color)}
-            height={150}
-            yFormatter={yFmt}
-          />
-          <Legend items={activeSeries.map(s => ({ label: s.label, color: s.color }))} />
-        </>
-      ) : (
-        <div style={{ textAlign: "center", padding: 24, color: "#615d55", fontSize: 13 }}>Pilih minimal 1 bahan</div>
-      )}
-
-      {/* Tabel kenaikan */}
-      <div style={{ marginTop: 16, borderTop: "1px solid #3a3834", paddingTop: 14 }}>
-        <div style={{ fontSize: 11, color: "#615d55", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.07em" }}>
-          Perubahan Jan → Jun
-        </div>
-        <div style={{ display: "grid", gap: 6 }}>
-          {kenaikan.map(b => (
-            <div key={b.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: b.color, display: "inline-block" }} />
-                <span style={{ fontSize: 12, color: "#d6d3cb" }}>{b.nama}</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 11, color: "#78746b", fontFamily: "monospace" }}>
-                  {idr(b.PERTAMA)} → {idr(b.TERAKHIR)}
-                </span>
-                <Badge color={b.PCT > 20 ? "#d1685c" : b.PCT > 10 ? "#d99a4e" : "#7fa86a"}>
-                  {b.PCT > 0 ? "+" : ""}{b.PCT.toFixed(1)}%
-                </Badge>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// SECTION: TREND HPP
-// ═══════════════════════════════════════════════════════════════
-function TrendHPP({ produkList }) {
-  const PRODUK_COLORS = ["#c96442", "#6ea3c4", "#7fa86a", "#a98bbf", "#d99a4e"];
-  const [activeProd, setActiveProd] = useState(["P001", "P004"]);
-
-  const toggle = id => setActiveProd(prev =>
-    prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-  );
-
-  const series = produkList
-    .filter(p => activeProd.includes(p.ID_PRODUK) && TREND_HPP[p.ID_PRODUK])
-    .map((p, i) => ({
-      label: p.NAMA_PRODUK,
-      data: TREND_HPP[p.ID_PRODUK],
-      color: PRODUK_COLORS[produkList.indexOf(p)],
-    }));
-
-  return (
-    <Card>
-      <SectionTitle accent="#6ea3c4">🧮 Trend HPP per Porsi (6 Bulan)</SectionTitle>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
-        {produkList.map((p, i) => (
-          <button key={p.ID_PRODUK} onClick={() => toggle(p.ID_PRODUK)} style={{
-            border: `1px solid ${activeProd.includes(p.ID_PRODUK) ? PRODUK_COLORS[i] : "#3a3834"}`,
-            background: activeProd.includes(p.ID_PRODUK) ? PRODUK_COLORS[i] + "22" : "transparent",
-            color: activeProd.includes(p.ID_PRODUK) ? PRODUK_COLORS[i] : "#78746b",
-            padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer",
-          }}>{p.NAMA_PRODUK}</button>
-        ))}
-      </div>
-      {series.length > 0 ? (
-        <>
-          <LineChart
-            series={series}
-            labels={BULAN_LABELS}
-            colors={series.map(s => s.color)}
-            height={150}
-            yFormatter={v => `${(v / 1000).toFixed(1)}k`}
-          />
-          <Legend items={series.map(s => ({ label: s.label, color: s.color }))} />
-        </>
-      ) : (
-        <div style={{ textAlign: "center", padding: 24, color: "#615d55", fontSize: 13 }}>Pilih minimal 1 produk</div>
-      )}
-
-      {/* Tabel HPP naik */}
-      <div style={{ marginTop: 16, borderTop: "1px solid #3a3834", paddingTop: 14 }}>
-        <div style={{ fontSize: 11, color: "#615d55", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.07em" }}>
-          Kenaikan HPP Jan → Jun
-        </div>
-        {produkList.map((p, i) => {
-          const arr  = TREND_HPP[p.ID_PRODUK] || [];
-          const naik = arr.length > 1 ? round2(((arr[arr.length-1] - arr[0]) / arr[0]) * 100) : 0;
-          return (
-            <div key={p.ID_PRODUK} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRODUK_COLORS[i], display: "inline-block" }} />
-                <span style={{ fontSize: 12, color: "#d6d3cb" }}>{p.NAMA_PRODUK}</span>
-              </div>
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <span style={{ fontSize: 11, color: "#78746b", fontFamily: "monospace" }}>
-                  {idr(arr[0])} → {idr(arr[arr.length-1])}
-                </span>
-                <Badge color={naik > 15 ? "#d1685c" : naik > 5 ? "#d99a4e" : "#7fa86a"}>
-                  +{naik.toFixed(1)}%
-                </Badge>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </Card>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// SECTION: TREND MARGIN
-// ═══════════════════════════════════════════════════════════════
-function TrendMargin({ produkList }) {
-  const PRODUK_COLORS = ["#c96442", "#6ea3c4", "#7fa86a", "#a98bbf", "#d99a4e"];
-
-  return (
-    <Card>
-      <SectionTitle accent="#7fa86a">📉 Trend Margin % (6 Bulan)</SectionTitle>
-      <LineChart
-        series={produkList.map((p, i) => ({
-          label: p.NAMA_PRODUK,
-          data: TREND_MARGIN[p.ID_PRODUK] || [],
-          color: PRODUK_COLORS[i],
-        }))}
-        labels={BULAN_LABELS}
-        colors={PRODUK_COLORS}
-        height={150}
-        yFormatter={v => `${v.toFixed(0)}%`}
-        showArea={false}
-      />
-      <Legend items={produkList.map((p, i) => ({ label: p.NAMA_PRODUK, color: PRODUK_COLORS[i] }))} />
-
-      {/* Tabel perbandingan margin awal vs sekarang */}
-      <div style={{ marginTop: 16, borderTop: "1px solid #3a3834", paddingTop: 14 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: "6px 16px", alignItems: "center" }}>
-          <span style={{ fontSize: 10, color: "#615d55", textTransform: "uppercase" }}>Produk</span>
-          <span style={{ fontSize: 10, color: "#615d55", textTransform: "uppercase" }}>Jan</span>
-          <span style={{ fontSize: 10, color: "#615d55", textTransform: "uppercase" }}>Jun</span>
-          <span style={{ fontSize: 10, color: "#615d55", textTransform: "uppercase" }}>Δ</span>
-          {produkList.map((p, i) => {
-            const arr  = TREND_MARGIN[p.ID_PRODUK] || [];
-            const jan  = arr[0] || 0;
-            const jun  = arr[arr.length - 1] || 0;
-            const delta = round2(jun - jan);
-            return (
-              <>
-                <span key={`n${i}`} style={{ fontSize: 12, color: "#d6d3cb", display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRODUK_COLORS[i], display: "inline-block" }} />
-                  {p.NAMA_PRODUK}
-                </span>
-                <span key={`j${i}`} style={{ fontSize: 12, color: "#a9a49a", fontFamily: "monospace", textAlign: "right" }}>{pct(jan)}</span>
-                <span key={`u${i}`} style={{ fontSize: 12, color: marginColor(jun), fontFamily: "monospace", textAlign: "right" }}>{pct(jun)}</span>
-                <span key={`d${i}`}>
-                  <Badge color={delta >= 0 ? "#7fa86a" : "#d1685c"}>
-                    {delta >= 0 ? "+" : ""}{delta.toFixed(1)}%
-                  </Badge>
-                </span>
-              </>
-            );
-          })}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
 // SECTION: FOOD COST ANALYTICS
 // ═══════════════════════════════════════════════════════════════
 function FoodCostAnalytics({ data }) {
@@ -547,21 +319,6 @@ function FoodCostAnalytics({ data }) {
           <div style={{ fontSize: 11, color: "#78746b", marginTop: 8, marginBottom: 4 }}>Profit Bersih</div>
           <div style={{ fontSize: 15, fontWeight: 700, color: "#7fa86a" }}>{idr(profit)}</div>
         </div>
-      </div>
-
-      {/* Trend Food Cost Bulanan */}
-      <div style={{ borderTop: "1px solid #3a3834", paddingTop: 14, marginBottom: 14 }}>
-        <div style={{ fontSize: 11, color: "#615d55", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.07em" }}>
-          Trend Food Cost % — 6 Bulan
-        </div>
-        <LineChart
-          series={[{ label: "Food Cost %", data: TREND_FOOD_COST, color: "#d99a4e" }]}
-          labels={BULAN_LABELS}
-          colors={["#d99a4e"]}
-          height={100}
-          yFormatter={v => `${v.toFixed(0)}%`}
-        />
-        <div style={{ fontSize: 10, color: "#615d55", marginTop: 4 }}>Garis target: 30% — semakin mendekati 40% perlu tindakan korektif.</div>
       </div>
 
       {/* Food Cost per produk */}
@@ -861,6 +618,7 @@ export default function KCCAnalytics() {
 
   const [bahanList,    setBahanList]    = useState(INITIAL_BAHAN);
   const [produkList,   setProdukList]   = useState(PRODUK);
+  const [resepData,    setResepData]    = useState(RESEP);
   const [supplierList, setSupplierList] = useState(SUPPLIER_DATA);
   const [penjualan,    setPenjualan]    = useState(PENJUALAN_HARI_INI);
 
@@ -869,19 +627,21 @@ export default function KCCAnalytics() {
     Promise.all([
       fetchBahan(token),
       fetchProduk(token),
+      fetchResep(token),
       fetchSupplier(token),
       fetchDashboard(token),
-    ]).then(([bahanData, produkData, supplierData, dashData]) => {
+    ]).then(([bahanData, produkData, resepDataFetched, supplierData, dashData]) => {
       if (bahanData)           setBahanList(bahanData);
       if (produkData)          setProdukList(produkData);
+      if (resepDataFetched)    setResepData(resepDataFetched);
       if (supplierData)        setSupplierList(supplierData);
       if (dashData?.penjualan) setPenjualan(dashData.penjualan);
     });
   }, [token]);
 
   const data = useMemo(
-    () => getAnalyticsData(bahanList, produkList, penjualan, supplierList),
-    [bahanList, produkList, penjualan, supplierList]
+    () => getAnalyticsData(bahanList, produkList, resepData, penjualan, supplierList),
+    [bahanList, produkList, resepData, penjualan, supplierList]
   );
 
   return (
@@ -896,24 +656,13 @@ export default function KCCAnalytics() {
         @media (max-width: 680px)  { .ana-3col { grid-template-columns: 1fr; } }
       `}</style>
 
-        {/* Row 1 — Trend Harga Bahan + Trend HPP */}
-        <div className="ana-grid ana-2col" style={{ marginBottom: 16 }}>
-          <TrendHargaBahan bahanList={bahanList} />
-          <TrendHPP produkList={produkList} />
-        </div>
-
-        {/* Row 2 — Trend Margin (full width) */}
-        <div style={{ marginBottom: 16 }}>
-          <TrendMargin produkList={produkList} />
-        </div>
-
-        {/* Row 3 — Food Cost + Supplier */}
+        {/* Row 1 — Food Cost + Supplier */}
         <div className="ana-grid ana-2col" style={{ marginBottom: 16 }}>
           <FoodCostAnalytics data={data} />
           <SupplierAnalysis supplierSummary={data.supplierSummary} />
         </div>
 
-        {/* Row 4 — Ranking Produk (full width) */}
+        {/* Row 2 — Ranking Produk (full width) */}
         <div style={{ marginBottom: 16 }}>
           <RankingProduk rankingFinal={data.rankingFinal} jualMap={data.jualMap} />
         </div>
