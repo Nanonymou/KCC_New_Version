@@ -2,9 +2,13 @@ import { useState, useMemo, useEffect } from "react";
 import { useAuth } from "./AuthContext";
 import {
   INITIAL_BAHAN,
+  PRODUK,
+  RESEP,
   STOK_BAHAN,
   PENJUALAN_HARI_INI,
   fetchBahan,
+  fetchProduk,
+  fetchResep,
   fetchStok,
   fetchDashboard,
   recalcSemua,
@@ -14,8 +18,8 @@ import { T, marginTone as marginColor } from "./theme";
 
 // DASHBOARD SERVICE — hanya membaca dari Service Layer
 // ─────────────────────────────────────────────────────────────
-function getDashboardData(bahanList, stokBahan, penjualanHariIni) {
-  const produkHPP = recalcSemua(bahanList);
+function getDashboardData(bahanList, produkList, resepData, stokBahan, penjualanHariIni) {
+  const produkHPP = recalcSemua(bahanList, produkList, resepData);
   const bahanMap  = {};
   bahanList.forEach(b => { bahanMap[b.ID_BAHAN] = b; });
   const stokMap = {};
@@ -193,9 +197,11 @@ function AlertRow({ icon, label, value, sub, accent = T.danger }) {
 export default function KCCDashboard() {
   const { token, isDemo } = useAuth();
 
-  const [bahan,     setBahan]     = useState(INITIAL_BAHAN);
-  const [stokBahan, setStokBahan] = useState(STOK_BAHAN);
-  const [penjualan, setPenjualan] = useState(PENJUALAN_HARI_INI);
+  const [bahan,      setBahan]      = useState(INITIAL_BAHAN);
+  const [produkList, setProdukList] = useState(PRODUK);
+  const [resepData,  setResepData]  = useState(RESEP);
+  const [stokBahan,  setStokBahan]  = useState(STOK_BAHAN);
+  const [penjualan,  setPenjualan]  = useState(PENJUALAN_HARI_INI);
   // 'loading' → 'ready' (live data received) | 'error' (backend/DB unavailable)
   const [status, setStatus] = useState("loading");
 
@@ -206,23 +212,32 @@ export default function KCCDashboard() {
     setStatus("loading");
     Promise.all([
       fetchBahan(token),
+      fetchProduk(token),
+      fetchResep(token),
       fetchStok(token),
       fetchDashboard(token),
-    ]).then(([bahanData, stokData, dashData]) => {
+    ]).then(([bahanData, produkData, resepDataFetched, stokData, dashData]) => {
       if (bahanData)              setBahan(bahanData);
+      if (produkData)             setProdukList(produkData);
+      if (resepDataFetched)       setResepData(resepDataFetched);
       if (stokData)               setStokBahan(stokData);
       if (dashData?.penjualan)    setPenjualan(dashData.penjualan);
       // The fetch* helpers return null on failure — only claim "live data"
       // when every dataset the dashboard renders actually arrived.
       const hasLiveData =
         Array.isArray(bahanData) &&
+        Array.isArray(produkData) &&
+        Array.isArray(resepDataFetched) &&
         Array.isArray(stokData) &&
         Array.isArray(dashData?.penjualan);
       setStatus(hasLiveData ? "ready" : "error");
     }).catch(() => setStatus("error"));
   }, [token, isDemo]);
 
-  const data = useMemo(() => getDashboardData(bahan, stokBahan, penjualan), [bahan, stokBahan, penjualan]);
+  const data = useMemo(
+    () => getDashboardData(bahan, produkList, resepData, stokBahan, penjualan),
+    [bahan, produkList, resepData, stokBahan, penjualan]
+  );
 
   const {
     omzet, totalFoodCost, foodCostPct, profit, avgMargin,
