@@ -3,19 +3,25 @@ import { useAuth } from "./AuthContext";
 import {
   INITIAL_BAHAN,
   PRODUK,
+  RESEP,
   SIMULASI_SKENARIO,
   fetchBahan,
   fetchProduk,
+  fetchResep,
+  updateBahan,
+  deactivateBahan,
   recalcSemua,
   round2,
   idr, pct, marginColor,
 } from "./kcc_data_layer";
+import { Modal, Field, TextInput, Button, FormError } from "./FormKit";
 
 export default function HPPEngine() {
   const { token } = useAuth();
   const [bahan, setBahan]           = useState(INITIAL_BAHAN);
   const [produkList, setProdukList] = useState(PRODUK);
-  const [produkHPP, setProdukHPP]   = useState(() => recalcSemua(INITIAL_BAHAN));
+  const [resepData, setResepData]   = useState(RESEP);
+  const [produkHPP, setProdukHPP]   = useState(() => recalcSemua(INITIAL_BAHAN, PRODUK, RESEP));
   const [selectedProduk, setSelectedProduk] = useState(null);
   const [log, setLog]               = useState([]);
   const [simAktif, setSimAktif]     = useState(null);
@@ -24,7 +30,13 @@ export default function HPPEngine() {
   const [tab, setTab]               = useState("dashboard"); // dashboard | hpp | detail | simulasi
   const [editHarga, setEditHarga]   = useState(null);
   const [editVal, setEditVal]       = useState("");
+  const [editDetailRow, setEditDetailRow] = useState(null); // bahan sedang diedit lengkap
+  const [deletingBahanId, setDeletingBahanId] = useState(null);
   const prevHPPRef                  = useRef({});
+  // Snapshot bahan (harga) persis setelah fetch live pertama berhasil, dipakai
+  // sebagai "harga awal" untuk skenario reset — bukan data dummy statis, agar
+  // selalu cocok dengan bahan nyata milik outlet ini.
+  const bahanAwalRef                = useRef(null);
 
   // ── Live data fetch on mount (GAS) ──────────────────────────
   useEffect(() => {
@@ -32,15 +44,20 @@ export default function HPPEngine() {
     Promise.all([
       fetchBahan(token),
       fetchProduk(token),
-    ]).then(([bahanData, produkData]) => {
-      if (bahanData)  setBahan(bahanData);
+      fetchResep(token),
+    ]).then(([bahanData, produkData, resepDataFetched]) => {
+      if (bahanData) {
+        setBahan(bahanData);
+        if (!bahanAwalRef.current) bahanAwalRef.current = bahanData;
+      }
       if (produkData) setProdukList(produkData);
+      if (resepDataFetched) setResepData(resepDataFetched);
     });
   }, [token]);
 
   // ── REACTIVE: setiap bahan berubah → recalc otomatis ──
   useEffect(() => {
-    const hasil = recalcSemua(bahan);
+    const hasil = recalcSemua(bahan, produkList, resepData);
 
     // Deteksi perubahan untuk log
     hasil.forEach(p => {
@@ -60,43 +77,75 @@ export default function HPPEngine() {
     prevHPPRef.current = {};
     hasil.forEach(p => { prevHPPRef.current[p.ID_PRODUK] = p; });
     setProdukHPP(hasil);
-  }, [bahan]);
+  }, [bahan, produkList, resepData]);
 
   // ── Simulasi: hitung tanpa simpan ──
   useEffect(() => {
     if (!simBahan) { setSimHPP(null); return; }
-    setSimHPP(recalcSemua(simBahan));
-  }, [simBahan]);
+    setSimHPP(recalcSemua(simBahan, produkList, resepData));
+  }, [simBahan, produkList, resepData]);
 
   const addLog = useCallback((tipe, pesan) => {
     const ts = new Date().toLocaleTimeString("id-ID");
     setLog(prev => [{ ts, tipe, pesan, id: Date.now() + Math.random() }, ...prev].slice(0, 40));
   }, []);
 
-  // ── Update harga satu bahan → engine langsung jalan ──
+  // ── Update harga satu bahan → engine langsung jalan + simpan ke server ──
   const updateHargaBahan = (idBahan, hargaBaru) => {
     const h = Number(hargaBaru);
     if (isNaN(h) || h <= 0) return;
     setBahan(prev => {
+      const target = prev.find(b => b.ID_BAHAN === idBahan);
+      if (!target) return prev;
       const updated = prev.map(b =>
         b.ID_BAHAN === idBahan ? { ...b, HARGA_RATA2: h } : b
       );
-      const bObj = updated.find(b => b.ID_BAHAN === idBahan);
-      addLog("update", `Harga ${bObj?.NAMA_BAHAN} diubah → ${idr(h)}/${bObj?.SATUAN_BELI}`);
+      addLog("update", `Harga ${target.NAMA_BAHAN} diubah → ${idr(h)}/${target.SATUAN_BELI}`);
+      // apiBahanUpdate menimpa SEMUA kolom bahan, jadi kirim data lengkap
+      // (bukan cuma harga) supaya satuan/konversi/nama tidak ikut ter-null.
+      updateBahan(token, {
+        ID_BAHAN: target.ID_BAHAN, NAMA_BAHAN: target.NAMA_BAHAN,
+        SATUAN_BELI: target.SATUAN_BELI, SATUAN_PAKAI: target.SATUAN_PAKAI,
+        KONVERSI: target.KONVERSI, HARGA_RATA2: h,
+      }).catch(e => addLog("update", `⚠️ Gagal menyimpan harga ${target.NAMA_BAHAN} ke server: ${e.message || "kesalahan"}`));
       return updated;
     });
   };
 
+  // ── Hapus (nonaktifkan) bahan dari daftar HPP ──
+  async function handleDeleteBahan(b) {
+    const resepTerpakai = resepData.filter(r => r.ID_BAHAN === b.ID_BAHAN);
+    const jumlahProdukTerpakai = new Set(resepTerpakai.map(r => r.ID_PRODUK)).size;
+    const peringatanResep = jumlahProdukTerpakai > 0
+      ? ` ⚠️ Bahan ini masih dipakai di ${jumlahProdukTerpakai} resep produk — HPP produk tersebut akan turun (bahan ini tidak ikut terhitung lagi) sampai dikeluarkan dari resep atau diaktifkan kembali.`
+      : "";
+    if (!window.confirm(`Hapus bahan "${b.NAMA_BAHAN}"? Bahan hanya disembunyikan (dinonaktifkan) — resep & riwayat lama tetap aman.${peringatanResep}`)) return;
+    setDeletingBahanId(b.ID_BAHAN);
+    try {
+      await deactivateBahan(token, b.ID_BAHAN);
+      setBahan(prev => prev.filter(x => x.ID_BAHAN !== b.ID_BAHAN));
+      addLog("update", `Bahan ${b.NAMA_BAHAN} dihapus`);
+    } catch (e) {
+      window.alert("Gagal menghapus bahan: " + (e.message || "kesalahan server"));
+    } finally {
+      setDeletingBahanId(null);
+    }
+  }
+
   // ── Jalankan skenario simulasi ──
+  // Skenario sekarang generik (persentase terhadap SEMUA bahan yang ada
+  // sekarang, atau reset ke harga awal sesi) — tidak lagi terikat ke ID
+  // bahan contoh tertentu, jadi selalu berlaku untuk bahan apa pun yang
+  // sudah diinput lewat aplikasi.
   const jalankanSimulasi = (skenario) => {
     setSimAktif(skenario.id);
     const simB = bahan.map(b => {
-      const ov = skenario.perubahan.find(p => p.ID_BAHAN === b.ID_BAHAN);
-      if (!ov) return b;
-      const hargaBaru = ov.reset
-        ? INITIAL_BAHAN.find(ib => ib.ID_BAHAN === b.ID_BAHAN)?.HARGA_RATA2 ?? b.HARGA_RATA2
-        : round2(b.HARGA_RATA2 * ov.faktor);
-      return { ...b, HARGA_RATA2: hargaBaru };
+      if (skenario.reset) {
+        const awal = bahanAwalRef.current?.find(ib => ib.ID_BAHAN === b.ID_BAHAN);
+        return { ...b, HARGA_RATA2: awal?.HARGA_RATA2 ?? b.HARGA_RATA2 };
+      }
+      const faktor = 1 + (Number(skenario.pct) || 0) / 100;
+      return { ...b, HARGA_RATA2: round2(b.HARGA_RATA2 * faktor) };
     });
     setSimBahan(simB);
     addLog("sim", `Simulasi: "${skenario.label}" — ${skenario.desc}`);
@@ -323,14 +372,14 @@ export default function HPPEngine() {
             <th style={S.th}>Konversi</th>
             <th style={{ ...S.th, textAlign: "right" }}>Harga/Satuan Beli</th>
             <th style={{ ...S.th, textAlign: "right" }}>Harga/Satuan Pakai</th>
-            <th style={{ ...S.th, textAlign: "center" }}>Edit</th>
+            <th style={{ ...S.th, textAlign: "center" }}>Aksi</th>
           </tr>
         </thead>
         <tbody>
           {bahan.map(b => {
             const isEditing = editHarga === b.ID_BAHAN;
             const hargaPerPakai = round2(b.HARGA_RATA2 / b.KONVERSI);
-            const isChanged = b.HARGA_RATA2 !== INITIAL_BAHAN.find(ib => ib.ID_BAHAN === b.ID_BAHAN)?.HARGA_RATA2;
+            const isChanged = b.HARGA_RATA2 !== bahanAwalRef.current?.find(ib => ib.ID_BAHAN === b.ID_BAHAN)?.HARGA_RATA2;
             return (
               <tr key={b.ID_BAHAN} className="hover-row">
                 <td style={S.td}>
@@ -375,10 +424,22 @@ export default function HPPEngine() {
                         onClick={() => setEditHarga(null)}>✕</button>
                     </div>
                   ) : (
-                    <button className="btn-hover" style={{ ...S.btn("ghost"), fontSize: 12, padding: "5px 10px" }}
-                      onClick={() => { setEditHarga(b.ID_BAHAN); setEditVal(String(b.HARGA_RATA2)); }}>
-                      Edit
-                    </button>
+                    <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                      <button className="btn-hover" style={{ ...S.btn("ghost"), fontSize: 12, padding: "5px 10px" }}
+                        onClick={() => { setEditHarga(b.ID_BAHAN); setEditVal(String(b.HARGA_RATA2)); }}>
+                        Harga
+                      </button>
+                      <button className="btn-hover" style={{ ...S.btn("ghost"), fontSize: 12, padding: "5px 10px" }}
+                        onClick={() => setEditDetailRow(b)}>
+                        Detail
+                      </button>
+                      <button className="btn-hover"
+                        style={{ ...S.btn("ghost"), fontSize: 12, padding: "5px 10px", color: "#d1685c", borderColor: "rgba(209,104,92,0.32)" }}
+                        disabled={deletingBahanId === b.ID_BAHAN}
+                        onClick={() => handleDeleteBahan(b)}>
+                        {deletingBahanId === b.ID_BAHAN ? "…" : "Hapus"}
+                      </button>
+                    </div>
                   )}
                 </td>
               </tr>
@@ -388,7 +449,10 @@ export default function HPPEngine() {
       </table>
       <div style={{ marginTop: 12 }}>
         <button className="btn-hover" style={S.btn("ghost")}
-          onClick={() => { setBahan(INITIAL_BAHAN); addLog("update", "Semua harga direset ke nilai awal"); }}>
+          onClick={() => {
+            if (bahanAwalRef.current) setBahan(bahanAwalRef.current);
+            addLog("update", "Semua harga direset ke nilai awal sesi");
+          }}>
           ↺ Reset Harga
         </button>
       </div>
@@ -498,7 +562,7 @@ export default function HPPEngine() {
       </div>
 
       {/* Skenario buttons */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${SIMULASI_SKENARIO.length}, 1fr)`, gap: 12, marginBottom: 24 }}>
         {SIMULASI_SKENARIO.map(s => (
           <div key={s.id} className="sim-card"
             style={S.simCard(simAktif === s.id)}
@@ -643,6 +707,84 @@ export default function HPPEngine() {
         {tab === "detail"    && <TabDetail />}
         {tab === "simulasi"  && <TabSimulasi />}
       </div>
+
+      {editDetailRow && (
+        <EditBahanDetailModal
+          token={token}
+          row={editDetailRow}
+          onClose={() => setEditDetailRow(null)}
+          onDone={(updated) => {
+            setBahan(prev => prev.map(b => b.ID_BAHAN === updated.ID_BAHAN ? { ...b, ...updated } : b));
+            addLog("update", `Bahan ${updated.NAMA_BAHAN} diperbarui (satuan/konversi/harga)`);
+            setEditDetailRow(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// ─── Edit lengkap satu bahan: nama, satuan beli/pakai, konversi & harga ──────
+function EditBahanDetailModal({ token, row, onClose, onDone }) {
+  const [nama, setNama]               = useState(row.NAMA_BAHAN || "");
+  const [satuanBeli, setSatuanBeli]   = useState(row.SATUAN_BELI || "");
+  const [satuanPakai, setSatuanPakai] = useState(row.SATUAN_PAKAI || "");
+  const [konversi, setKonversi]       = useState(String(row.KONVERSI ?? "1"));
+  const [harga, setHarga]             = useState(String(row.HARGA_RATA2 ?? "0"));
+  const [saving, setSaving]           = useState(false);
+  const [error, setError]             = useState(null);
+
+  async function submit() {
+    setError(null);
+    if (!nama.trim())            return setError("Nama bahan wajib diisi.");
+    if (!satuanBeli.trim())      return setError("Satuan beli wajib diisi.");
+    if (!satuanPakai.trim())     return setError("Satuan pakai wajib diisi.");
+    if (!(Number(konversi) > 0)) return setError("Konversi harus lebih dari 0.");
+    if (!(Number(harga) >= 0))   return setError("Harga tidak boleh negatif.");
+    setSaving(true);
+    try {
+      const payload = {
+        ID_BAHAN: row.ID_BAHAN,
+        NAMA_BAHAN: nama.trim(), SATUAN_BELI: satuanBeli.trim(), SATUAN_PAKAI: satuanPakai.trim(),
+        KONVERSI: Number(konversi), HARGA_RATA2: Number(harga),
+      };
+      await updateBahan(token, payload);
+      onDone(payload);
+    } catch (e) {
+      setError(e.message || "Gagal menyimpan perubahan bahan.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Edit Bahan — ${row.NAMA_BAHAN}`}
+      subtitle="Ubah nama, satuan beli/pakai, konversi & harga rata-rata"
+      onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Batal</Button>
+        <Button onClick={submit} loading={saving}>Simpan Perubahan</Button>
+      </>}
+    >
+      <FormError>{error}</FormError>
+      <Field label="Nama Bahan">
+        <TextInput value={nama} onChange={e => setNama(e.target.value)} autoFocus />
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <Field label="Satuan Beli">
+          <TextInput value={satuanBeli} onChange={e => setSatuanBeli(e.target.value)} placeholder="kg" />
+        </Field>
+        <Field label="Satuan Pakai">
+          <TextInput value={satuanPakai} onChange={e => setSatuanPakai(e.target.value)} placeholder="gram" />
+        </Field>
+        <Field label="Konversi" hint="1 satuan beli = ? satuan pakai">
+          <TextInput type="number" min="0.0001" step="any" value={konversi} onChange={e => setKonversi(e.target.value)} />
+        </Field>
+      </div>
+      <Field label={`Harga Rata-rata / ${satuanBeli || "satuan beli"}`}>
+        <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} placeholder="0" />
+      </Field>
+    </Modal>
   );
 }
