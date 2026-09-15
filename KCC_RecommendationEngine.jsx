@@ -3,11 +3,14 @@ import { useAuth } from "./AuthContext";
 import {
   INITIAL_BAHAN,
   PRODUK,
+  RESEP,
   PENJUALAN_HARI_INI,
   STOK_BAHAN,
   SUPPLIER_DATA,
   THRESHOLDS,
   fetchBahan,
+  fetchProduk,
+  fetchResep,
   fetchStok,
   fetchSupplier,
   fetchDashboard,
@@ -193,14 +196,14 @@ function runSupplierRules(bahanList, supplierList) {
 // Trigger: food cost hari ini > TARGET atau > KRITIS
 // Action : Warning dashboard + rekomendasi menu atau efisiensi
 // ─────────────────────────────────────────────────────────────────────────
-function runFoodCostRules(foodCostPct, produkHPP) {
+function runFoodCostRules(foodCostPct, produkHPP, penjualanHariIni) {
   const recs = [];
 
   if (foodCostPct > THRESHOLDS.FOOD_COST_KRITIS_PCT) {
     // Rule 4a — FOOD COST KRITIS
     // Sub-rule: identifikasi produk kontributor terbesar
     const jualMap = {};
-    PENJUALAN_HARI_INI.forEach(j => { jualMap[j.ID_PRODUK] = j.QTY; });
+    penjualanHariIni.forEach(j => { jualMap[j.ID_PRODUK] = j.QTY; });
 
     const kontributor = produkHPP
       .map(p => {
@@ -250,13 +253,13 @@ function runFoodCostRules(foodCostPct, produkHPP) {
 // Trigger: produk dengan margin OK tapi volume sangat rendah
 // Action : Saran promosi atau review menu
 // ─────────────────────────────────────────────────────────────────────────
-function runProdukRules(produkHPP) {
+function runProdukRules(produkHPP, penjualanHariIni) {
   const recs = [];
   const jualMap = {};
-  PENJUALAN_HARI_INI.forEach(j => { jualMap[j.ID_PRODUK] = j.QTY; });
+  penjualanHariIni.forEach(j => { jualMap[j.ID_PRODUK] = j.QTY; });
 
-  const totalQty = PENJUALAN_HARI_INI.reduce((s, j) => s + j.QTY, 0);
-  const avgQty   = totalQty / PENJUALAN_HARI_INI.length;
+  const totalQty = penjualanHariIni.reduce((s, j) => s + j.QTY, 0);
+  const avgQty   = penjualanHariIni.length > 0 ? totalQty / penjualanHariIni.length : 0;
 
   produkHPP.forEach(p => {
     const qty        = jualMap[p.ID_PRODUK] || 0;
@@ -301,17 +304,24 @@ function runProdukRules(produkHPP) {
 // ═══════════════════════════════════════════════════════════════════════════
 const PRIORITY_ORDER = { KRITIS: 0, PERINGATAN: 1, SARAN: 2, OK: 3 };
 
-function runAllRules(bahanList = INITIAL_BAHAN, stokList = STOK_BAHAN, supplierList = SUPPLIER_DATA) {
-  const produkHPP    = recalcSemua(bahanList);
-  const foodCostPct  = hitungFoodCostHariIni(produkHPP);
+function runAllRules(
+  bahanList = INITIAL_BAHAN,
+  stokList = STOK_BAHAN,
+  supplierList = SUPPLIER_DATA,
+  produkList = PRODUK,
+  resepData = RESEP,
+  penjualanHariIni = PENJUALAN_HARI_INI,
+) {
+  const produkHPP    = recalcSemua(bahanList, produkList, resepData);
+  const foodCostPct  = hitungFoodCostHariIni(produkHPP, penjualanHariIni);
 
   // Jalankan semua modul
   const semua = [
-    ...runFoodCostRules(foodCostPct, produkHPP),   // Food Cost — prioritas pertama
+    ...runFoodCostRules(foodCostPct, produkHPP, penjualanHariIni), // Food Cost — prioritas pertama
     ...runMarginRules(produkHPP),                  // Margin per produk
     ...runStokRules(bahanList, stokList),           // Stok minimum
     ...runSupplierRules(bahanList, supplierList),   // Harga supplier naik
-    ...runProdukRules(produkHPP),                  // Volume vs margin
+    ...runProdukRules(produkHPP, penjualanHariIni), // Volume vs margin
   ];
 
   // Sort berdasarkan prioritas
@@ -479,8 +489,11 @@ export default function KCCRecommendationEngine() {
   const [activeTab, setActiveTab] = useState("SEMUA");
 
   const [bahanList,    setBahanList]    = useState(INITIAL_BAHAN);
+  const [produkList,   setProdukList]   = useState(PRODUK);
+  const [resepData,    setResepData]    = useState(RESEP);
   const [stokList,     setStokList]     = useState(STOK_BAHAN);
   const [supplierList, setSupplierList] = useState(SUPPLIER_DATA);
+  const [penjualan,    setPenjualan]    = useState(PENJUALAN_HARI_INI);
 
   useEffect(() => {
     if (!token) return;
@@ -489,16 +502,21 @@ export default function KCCRecommendationEngine() {
       fetchStok(token),
       fetchSupplier(token),
       fetchDashboard(token),
-    ]).then(([bahanData, stokData, supplierData]) => {
-      if (bahanData)    setBahanList(bahanData);
-      if (stokData)     setStokList(stokData);
-      if (supplierData) setSupplierList(supplierData);
+      fetchProduk(token),
+      fetchResep(token),
+    ]).then(([bahanData, stokData, supplierData, dashboardData, produkData, resepDataFetched]) => {
+      if (bahanData)     setBahanList(bahanData);
+      if (stokData)      setStokList(stokData);
+      if (supplierData)  setSupplierList(supplierData);
+      if (dashboardData?.penjualan) setPenjualan(dashboardData.penjualan);
+      if (produkData)    setProdukList(produkData);
+      if (resepDataFetched) setResepData(resepDataFetched);
     });
   }, [token]);
 
   const { rekomendasi, summary } = useMemo(
-    () => runAllRules(bahanList, stokList, supplierList),
-    [bahanList, stokList, supplierList]
+    () => runAllRules(bahanList, stokList, supplierList, produkList, resepData, penjualan),
+    [bahanList, stokList, supplierList, produkList, resepData, penjualan]
   );
 
   const tabs = [
