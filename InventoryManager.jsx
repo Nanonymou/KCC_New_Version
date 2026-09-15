@@ -12,6 +12,9 @@ import {
   fetchDashboard,
   fetchPembelian,
   createBahan,
+  updateBahan,
+  deactivateBahan,
+  reactivateBahan,
   adjustStok,
   round2, idr,
 } from "./kcc_data_layer";
@@ -67,6 +70,9 @@ export default function InventoryManager() {
 
   const [showAdd, setShowAdd]   = useState(false);
   const [adjustRow, setAdjustRow] = useState(null); // bahan row being adjusted
+  const [editRow, setEditRow]     = useState(null); // bahan row being edited (satuan/konversi/harga)
+  const [deletingId, setDeletingId] = useState(null);
+  const [showInactive, setShowInactive] = useState(false);
   const [toast, setToast]       = useState("");
   const flashToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
@@ -83,6 +89,45 @@ export default function InventoryManager() {
   }, [token]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // Bahan yang dihapus disimpan sebagai nonaktif (active=false), bukan
+  // dihapus permanen, supaya resep & riwayat pembelian lama yang masih
+  // menyebut bahan ini tetap bisa dihitung/ditampilkan dengan benar.
+  const activeBahanList = useMemo(() => bahanList.filter(b => b.AKTIF !== false), [bahanList]);
+  const inactiveBahanList = useMemo(() => bahanList.filter(b => b.AKTIF === false), [bahanList]);
+
+  // Hapus (nonaktifkan) bahan — bisa dipulihkan lagi lewat "Bahan Nonaktif".
+  async function handleDeleteBahan(b) {
+    const resepTerpakai = resepData.filter(r => r.ID_BAHAN === b.ID_BAHAN);
+    const jumlahProdukTerpakai = new Set(resepTerpakai.map(r => r.ID_PRODUK)).size;
+    const peringatanResep = jumlahProdukTerpakai > 0
+      ? ` ⚠️ Bahan ini masih dipakai di ${jumlahProdukTerpakai} resep produk — HPP produk tersebut akan turun (bahan ini tidak ikut terhitung lagi) sampai kamu mengeluarkannya dari resep atau mengaktifkannya kembali.`
+      : "";
+    if (!window.confirm(`Hapus bahan "${b.NAMA_BAHAN}"? Bahan hanya disembunyikan (dinonaktifkan) — resep & riwayat pembelian lama tetap aman, dan bisa dipulihkan lagi lewat "Bahan Nonaktif".${peringatanResep}`)) return;
+    setDeletingId(b.ID_BAHAN);
+    try {
+      await deactivateBahan(token, b.ID_BAHAN);
+      await reload();
+      flashToast(`Bahan "${b.NAMA_BAHAN}" dihapus`);
+    } catch (e) {
+      window.alert("Gagal menghapus bahan: " + (e.message || "kesalahan server"));
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function handleReactivateBahan(b) {
+    setDeletingId(b.ID_BAHAN);
+    try {
+      await reactivateBahan(token, b.ID_BAHAN);
+      await reload();
+      flashToast(`Bahan "${b.NAMA_BAHAN}" diaktifkan kembali`);
+    } catch (e) {
+      window.alert("Gagal mengaktifkan bahan: " + (e.message || "kesalahan server"));
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const bahanMap = useMemo(() => {
     const m = {};
@@ -114,7 +159,7 @@ export default function InventoryManager() {
   }, [bahanMap, resepData, penjualan]);
 
   const inventoryRows = useMemo(() => {
-    return bahanList.map(b => {
+    return activeBahanList.map(b => {
       const stok  = stokMap[b.ID_BAHAN];
       const s     = stok?.STOK    ?? 0;
       const min   = stok?.MIN_STOK ?? 0;
@@ -166,7 +211,22 @@ export default function InventoryManager() {
           </div>
         </div>
         {canWrite ? (
-          <Button onClick={() => setShowAdd(true)}>＋ Tambah Bahan</Button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {inactiveBahanList.length > 0 && (
+              <button
+                onClick={() => setShowInactive(v => !v)}
+                style={{
+                  padding: "7px 12px", fontSize: 12, fontWeight: 600, borderRadius: 8, cursor: "pointer",
+                  color: showInactive ? "#c96442" : "#8a857b",
+                  background: showInactive ? "rgba(201,100,66,0.12)" : "transparent",
+                  border: "1px solid " + (showInactive ? "#c96442" : "#3a3834"),
+                }}
+              >
+                🗑 Bahan Nonaktif ({inactiveBahanList.length})
+              </button>
+            )}
+            <Button onClick={() => setShowAdd(true)}>＋ Tambah Bahan</Button>
+          </div>
         ) : (
           <span style={{ fontSize: 11.5, color: "#615d55" }}>
             {isDemo ? "Mode demo — hanya lihat" : "Perlu akses admin untuk input"}
@@ -177,7 +237,7 @@ export default function InventoryManager() {
       {/* KPI */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
         {[
-          { label: "Total Bahan", value: bahanList.length, accent: "#c96442", icon: "📦" },
+          { label: "Total Bahan", value: activeBahanList.length, accent: "#c96442", icon: "📦" },
           { label: "Stok Kritis", value: kritis, accent: "#d1685c", icon: "🔴" },
           { label: "Stok Rendah", value: rendah, accent: "#d99a4e", icon: "🟡" },
           { label: "Nilai Stok", value: idr(totalNilai), accent: "#7fa86a", icon: "💰" },
@@ -302,14 +362,35 @@ export default function InventoryManager() {
                   </td>
                   {canWrite && (
                     <td style={S.td}>
-                      <button
-                        onClick={() => setAdjustRow(b)}
-                        style={{
-                          padding: "4px 10px", fontSize: 11.5, fontWeight: 600,
-                          color: "#c96442", background: "rgba(201,100,66,0.10)",
-                          border: "1px solid rgba(201,100,66,0.32)", borderRadius: 6, cursor: "pointer",
-                        }}
-                      >Sesuaikan</button>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          onClick={() => setAdjustRow(b)}
+                          style={{
+                            padding: "4px 10px", fontSize: 11.5, fontWeight: 600,
+                            color: "#c96442", background: "rgba(201,100,66,0.10)",
+                            border: "1px solid rgba(201,100,66,0.32)", borderRadius: 6, cursor: "pointer",
+                          }}
+                        >Sesuaikan</button>
+                        <button
+                          onClick={() => setEditRow(b)}
+                          style={{
+                            padding: "4px 10px", fontSize: 11.5, fontWeight: 600,
+                            color: "#8a857b", background: "rgba(138,133,123,0.10)",
+                            border: "1px solid rgba(138,133,123,0.32)", borderRadius: 6, cursor: "pointer",
+                          }}
+                        >Edit</button>
+                        <button
+                          onClick={() => handleDeleteBahan(b)}
+                          disabled={deletingId === b.ID_BAHAN}
+                          style={{
+                            padding: "4px 10px", fontSize: 11.5, fontWeight: 600,
+                            color: "#d1685c", background: "rgba(209,104,92,0.10)",
+                            border: "1px solid rgba(209,104,92,0.32)", borderRadius: 6,
+                            cursor: deletingId === b.ID_BAHAN ? "default" : "pointer",
+                            opacity: deletingId === b.ID_BAHAN ? 0.6 : 1,
+                          }}
+                        >{deletingId === b.ID_BAHAN ? "…" : "Hapus"}</button>
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -323,6 +404,40 @@ export default function InventoryManager() {
           </div>
         )}
       </Card>
+
+      {/* Bahan Nonaktif (dihapus) — bisa dipulihkan */}
+      {showInactive && inactiveBahanList.length > 0 && (
+        <Card style={{ marginTop: 14 }}>
+          <div style={S.label}>Bahan Nonaktif (Dihapus)</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {inactiveBahanList.map(b => (
+              <div key={b.ID_BAHAN} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,0.02)",
+                border: "1px solid #3a3834",
+              }}>
+                <div>
+                  <span style={{ fontWeight: 600, color: "#a9a49a" }}>{b.NAMA_BAHAN}</span>
+                  <span style={{ fontSize: 11, color: "#615d55", marginLeft: 8 }}>{b.ID_BAHAN}</span>
+                </div>
+                {canWrite && (
+                  <button
+                    onClick={() => handleReactivateBahan(b)}
+                    disabled={deletingId === b.ID_BAHAN}
+                    style={{
+                      padding: "4px 10px", fontSize: 11.5, fontWeight: 600,
+                      color: "#7fa86a", background: "rgba(127,168,106,0.10)",
+                      border: "1px solid rgba(127,168,106,0.32)", borderRadius: 6,
+                      cursor: deletingId === b.ID_BAHAN ? "default" : "pointer",
+                      opacity: deletingId === b.ID_BAHAN ? 0.6 : 1,
+                    }}
+                  >Aktifkan Lagi</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* Grafik ketahanan stok */}
       <Card style={{ marginTop: 14 }}>
@@ -357,6 +472,14 @@ export default function InventoryManager() {
           pembelianList={pembelianList}
           onClose={() => setShowAdd(false)}
           onDone={async (nama) => { setShowAdd(false); await reload(); flashToast(`Bahan "${nama}" ditambahkan`); }}
+        />
+      )}
+      {editRow && (
+        <EditBahanModal
+          token={token}
+          row={editRow}
+          onClose={() => setEditRow(null)}
+          onDone={async () => { const n = editRow.NAMA_BAHAN; setEditRow(null); await reload(); flashToast(`Bahan "${n}" diperbarui`); }}
         />
       )}
       {adjustRow && (
@@ -576,6 +699,73 @@ function AddBahanModal({ token, bahanList = [], pembelianList = [], onClose, onD
         <Field label="Stok Awal (opsional)"><TextInput type="number" min="0" step="any" value={stok} onChange={e => setStok(e.target.value)} placeholder="0" /></Field>
         <Field label="Stok Minimum (opsional)"><TextInput type="number" min="0" step="any" value={minStok} onChange={e => setMinStok(e.target.value)} placeholder="0" /></Field>
       </div>
+    </Modal>
+  );
+}
+
+// ─── Edit Bahan modal ────────────────────────────────────────────────────────
+// Edit menyeluruh: nama, satuan beli, satuan pakai, konversi, dan harga
+// rata-rata sekaligus — semua field yang menentukan bagaimana HPP resep
+// dihitung untuk bahan ini.
+function EditBahanModal({ token, row, onClose, onDone }) {
+  const [nama, setNama]               = useState(row.NAMA_BAHAN || "");
+  const [satuanBeli, setSatuanBeli]   = useState(row.SATUAN_BELI || "");
+  const [satuanPakai, setSatuanPakai] = useState(row.SATUAN_PAKAI || "");
+  const [konversi, setKonversi]       = useState(String(row.KONVERSI ?? "1"));
+  const [harga, setHarga]             = useState(String(row.HARGA_RATA2 ?? "0"));
+  const [saving, setSaving]           = useState(false);
+  const [error, setError]             = useState(null);
+
+  async function submit() {
+    setError(null);
+    if (!nama.trim())            return setError("Nama bahan wajib diisi.");
+    if (!satuanBeli.trim())      return setError("Satuan beli wajib diisi.");
+    if (!satuanPakai.trim())     return setError("Satuan pakai wajib diisi.");
+    if (!(Number(konversi) > 0)) return setError("Konversi harus lebih dari 0.");
+    if (!(Number(harga) >= 0))   return setError("Harga tidak boleh negatif.");
+    setSaving(true);
+    try {
+      await updateBahan(token, {
+        ID_BAHAN: row.ID_BAHAN,
+        NAMA_BAHAN: nama.trim(), SATUAN_BELI: satuanBeli.trim(), SATUAN_PAKAI: satuanPakai.trim(),
+        KONVERSI: Number(konversi), HARGA_RATA2: Number(harga),
+      });
+      onDone();
+    } catch (e) {
+      setError(e.message || "Gagal menyimpan perubahan bahan.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Edit Bahan — ${row.NAMA_BAHAN}`}
+      subtitle="Ubah nama, satuan, konversi & harga rata-rata"
+      onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Batal</Button>
+        <Button onClick={submit} loading={saving}>Simpan Perubahan</Button>
+      </>}
+    >
+      <FormError>{error}</FormError>
+      <Field label="Nama Bahan">
+        <TextInput value={nama} onChange={e => setNama(e.target.value)} autoFocus />
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <Field label="Satuan Beli">
+          <TextInput value={satuanBeli} onChange={e => setSatuanBeli(e.target.value)} placeholder="kg" />
+        </Field>
+        <Field label="Satuan Pakai">
+          <TextInput value={satuanPakai} onChange={e => setSatuanPakai(e.target.value)} placeholder="gram" />
+        </Field>
+        <Field label="Konversi" hint="1 satuan beli = ? satuan pakai">
+          <TextInput type="number" min="0.0001" step="any" value={konversi} onChange={e => setKonversi(e.target.value)} />
+        </Field>
+      </div>
+      <Field label={`Harga Rata-rata / ${satuanBeli || "satuan beli"}`}>
+        <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} placeholder="0" />
+      </Field>
     </Modal>
   );
 }
