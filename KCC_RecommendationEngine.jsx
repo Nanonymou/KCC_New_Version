@@ -48,6 +48,12 @@ function runMarginRules(produkHPP) {
   const recs = [];
 
   produkHPP.forEach(p => {
+    // Produk yang harga jualnya belum diisi (default 0) atau resepnya belum
+    // diisi sama sekali bukan masalah margin — itu data yang belum lengkap.
+    // Tanpa guard ini, setiap produk baru langsung memicu "margin KRITIS"
+    // palsu dengan saran harga Rp 0.
+    if (!(p.HARGA_JUAL > 0)) return;
+    if (!(p.HPP_PER_PCS > 0)) return;
     const margin = p.MARGIN_PCT;
 
     if (margin < THRESHOLDS.MARGIN_KRITIS_PCT) {
@@ -164,14 +170,22 @@ function runSupplierRules(bahanList, supplierList) {
     if (adaAlternatifLebihMurah) {
       // Rule 3a — HARGA NAIK, ADA ALTERNATIF LEBIH MURAH
       const hemat = hargaSekarang - supplierTermurah.HARGA;
+      // Data supplier dari server memakai field NAMA (bukan NAMA_SUPPLIER) dan
+      // tidak punya field KOTA sama sekali — sebelumnya keduanya dibaca
+      // langsung sehingga teks rekomendasi menampilkan "undefined".
+      const namaSup  = supplierTermurah.NAMA_SUPPLIER || supplierTermurah.NAMA || supplierTermurah.ID_SUPPLIER || "Supplier lain";
+      // Satuan ikut bahan/supplier yang bersangkutan, bukan selalu "kg".
+      const satuanSup = supplierTermurah.SATUAN || bahan.SATUAN_BELI || "";
+      const perSatuan = satuanSup ? `/${satuanSup}` : "";
+      const telpSup  = supplierTermurah.TELP ? ` (${supplierTermurah.TELP})` : "";
       recs.push({
         id:       `SUPPLIER-GANTI-${bahan.ID_BAHAN}`,
         priority,
         category: "Harga Supplier",
         icon:     "🔄",
         produk:   bahan.NAMA_BAHAN,
-        action:   `Ganti ke ${supplierTermurah.NAMA_SUPPLIER} (${supplierTermurah.KOTA}) — hemat ${idr(hemat)}/kg`,
-        detail:   `Harga ${bahan.NAMA_BAHAN} naik ${pct(kenaikanPct)} (${idr(hargaSebelumnya)} → ${idr(hargaSekarang)}). ${supplierTermurah.NAMA_SUPPLIER} menawarkan ${idr(supplierTermurah.HARGA)}/kg.`,
+        action:   `Ganti ke ${namaSup}${telpSup} — hemat ${idr(hemat)}${perSatuan}`,
+        detail:   `Harga ${bahan.NAMA_BAHAN} naik ${pct(kenaikanPct)} (${idr(hargaSebelumnya)} → ${idr(hargaSekarang)}). ${namaSup} menawarkan ${idr(supplierTermurah.HARGA)}${perSatuan}.`,
         data:     { kenaikanPct, hargaSekarang, hargaSebelumnya, supplierTermurah, hemat },
       });
     } else {
@@ -207,6 +221,10 @@ function runFoodCostRules(foodCostPct, produkHPP, penjualanHariIni) {
     penjualanHariIni.forEach(j => { jualMap[j.ID_PRODUK] = j.QTY; });
 
     const kontributor = produkHPP
+      // Harga jual 0 (produk baru yang belum diisi harganya) membuat
+      // pembagian di bawah jadi Infinity/NaN dan produk itu selalu nongkrong
+      // di urutan teratas sebagai "kontributor terburuk" palsu.
+      .filter(p => p.HARGA_JUAL > 0)
       .map(p => {
         const qty = jualMap[p.ID_PRODUK] || 0;
         return {
@@ -225,8 +243,11 @@ function runFoodCostRules(foodCostPct, produkHPP, penjualanHariIni) {
       category: "Food Cost",
       icon:     "🔥",
       produk:   "Semua Produk",
-      action:   `DARURAT: Food Cost ${pct(foodCostPct)} — kurangi porsi bahan mahal atau stop promo produk ${terburuk?.nama}`,
-      detail:   `Food Cost hari ini ${pct(foodCostPct)} melampaui batas kritis ${pct(THRESHOLDS.FOOD_COST_KRITIS_PCT)}. Produk dengan food cost tertinggi: ${terburuk?.nama} (${pct(terburuk?.foodCostPcs)}).`,
+      action:   terburuk
+        ? `DARURAT: Food Cost ${pct(foodCostPct)} — kurangi porsi bahan mahal atau stop promo produk ${terburuk.nama}`
+        : `DARURAT: Food Cost ${pct(foodCostPct)} — kurangi porsi bahan mahal pada resep yang paling sering terjual`,
+      detail:   `Food Cost hari ini ${pct(foodCostPct)} melampaui batas kritis ${pct(THRESHOLDS.FOOD_COST_KRITIS_PCT)}.` +
+        (terburuk ? ` Produk dengan food cost tertinggi: ${terburuk.nama} (${pct(terburuk.foodCostPcs)}).` : ""),
       data:     { foodCostPct, target: THRESHOLDS.FOOD_COST_KRITIS_PCT, kontributor },
     });
 
