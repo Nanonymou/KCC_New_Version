@@ -12,13 +12,18 @@ import {
   fetchStok,
   fetchDashboard,
   recalcSemua,
+  filterAktif,
   round2, idr, pct,
 } from "./kcc_data_layer";
 import { T, marginTone as marginColor } from "./theme";
 
 // DASHBOARD SERVICE — hanya membaca dari Service Layer
 // ─────────────────────────────────────────────────────────────
-function getDashboardData(bahanList, produkList, resepData, stokBahan, penjualanHariIni) {
+function getDashboardData(bahanListRaw, produkListRaw, resepData, stokBahan, penjualanHariIni) {
+  // Bahan/produk yang sudah dihapus tidak boleh ikut dihitung atau muncul
+  // di alert manapun di dashboard.
+  const bahanList  = filterAktif(bahanListRaw);
+  const produkList = filterAktif(produkListRaw);
   const produkHPP = recalcSemua(bahanList, produkList, resepData);
   const bahanMap  = {};
   bahanList.forEach(b => { bahanMap[b.ID_BAHAN] = b; });
