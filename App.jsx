@@ -127,7 +127,7 @@ export default function App() {
       {/* ── Page Content ── */}
       <div key={activeTab} style={{
         maxWidth: 1320, margin: "0 auto", padding: "24px 18px 56px",
-        animation: "kcc-fade .35s ease both",
+        animation: "kcc-fade .35s ease backwards",
       }}>
         <ActiveComponent />
       </div>
