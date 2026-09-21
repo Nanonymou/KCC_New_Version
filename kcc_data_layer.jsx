@@ -158,6 +158,7 @@ export async function fetchDashboard(token) {
 // ── Inventory / Pembelian ──────────────────────────────────
 export const createPurchase = (token, data) => gasRun("apiInvPurchaseCreate", { token, data });
 export const voidPurchase   = (token, ID_PO) => gasRun("apiInvPurchaseVoid", { token, ID_PO });
+export const deletePurchase = (token, ID_PO) => gasRun("apiInvPurchaseDelete", { token, ID_PO });
 export const adjustStok     = (token, data) => gasRun("apiInvAdjustment", { token, data });
 
 // ── Maintenance: hapus sisa data contoh bawaan (SUPER_ADMIN saja) ──────────
