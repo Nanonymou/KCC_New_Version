@@ -11,6 +11,7 @@ import {
   updateBahan,
   deactivateBahan,
   recalcSemua,
+  filterAktif,
   round2,
   idr, pct, marginColor,
 } from "./kcc_data_layer";
@@ -47,10 +48,12 @@ export default function HPPEngine() {
       fetchResep(token),
     ]).then(([bahanData, produkData, resepDataFetched]) => {
       if (bahanData) {
-        setBahan(bahanData);
-        if (!bahanAwalRef.current) bahanAwalRef.current = bahanData;
+        // Bahan yang sudah dihapus tidak boleh muncul/ikut dihitung di HPP Engine.
+        const aktif = filterAktif(bahanData);
+        setBahan(aktif);
+        if (!bahanAwalRef.current) bahanAwalRef.current = aktif;
       }
-      if (produkData) setProdukList(produkData);
+      if (produkData) setProdukList(filterAktif(produkData));
       if (resepDataFetched) setResepData(resepDataFetched);
     });
   }, [token]);
