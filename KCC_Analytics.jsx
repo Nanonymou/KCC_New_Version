@@ -12,11 +12,17 @@ import {
   fetchSupplier,
   fetchDashboard,
   recalcSemua,
+  filterAktif,
   round2, idr, pct, marginColor,
 } from "./kcc_data_layer";
 
 // ─── ANALYTICS SERVICE ─────────────────────────────────────────
-function getAnalyticsData(bahanList, produkList, resepData, penjualanHariIni, supplierList) {
+function getAnalyticsData(bahanListRaw, produkListRaw, resepData, penjualanHariIni, supplierListRaw) {
+  // Bahan/produk/supplier yang sudah dihapus tidak boleh ikut dihitung
+  // atau muncul di analitik manapun.
+  const bahanList    = filterAktif(bahanListRaw);
+  const produkList   = filterAktif(produkListRaw);
+  const supplierList = filterAktif(supplierListRaw);
   const produkHPP = recalcSemua(bahanList, produkList, resepData);
   const jualMap = {};
   penjualanHariIni.forEach(j => { jualMap[j.ID_PRODUK] = j.QTY; });
