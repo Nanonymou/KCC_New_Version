@@ -16,6 +16,7 @@ import {
   fetchDashboard,
   recalcSemua,
   hitungFoodCostHariIni,
+  filterAktif,
   round2, idr, pct,
 } from "./kcc_data_layer";
 
@@ -305,13 +306,18 @@ function runProdukRules(produkHPP, penjualanHariIni) {
 const PRIORITY_ORDER = { KRITIS: 0, PERINGATAN: 1, SARAN: 2, OK: 3 };
 
 function runAllRules(
-  bahanList = INITIAL_BAHAN,
+  bahanListRaw = INITIAL_BAHAN,
   stokList = STOK_BAHAN,
-  supplierList = SUPPLIER_DATA,
-  produkList = PRODUK,
+  supplierListRaw = SUPPLIER_DATA,
+  produkListRaw = PRODUK,
   resepData = RESEP,
   penjualanHariIni = PENJUALAN_HARI_INI,
 ) {
+  // Bahan/produk/supplier yang sudah dihapus tidak boleh ikut memicu
+  // rekomendasi apa pun (food cost, margin, stok, harga supplier, dst).
+  const bahanList    = filterAktif(bahanListRaw);
+  const produkList   = filterAktif(produkListRaw);
+  const supplierList = filterAktif(supplierListRaw);
   const produkHPP    = recalcSemua(bahanList, produkList, resepData);
   const foodCostPct  = hitungFoodCostHariIni(produkHPP, penjualanHariIni);
 
