@@ -14,6 +14,7 @@ import {
   deactivateProduk,
   reactivateProduk,
   recalcSemua,
+  filterAktif,
   round2, idr, pct, marginColor,
 } from "./kcc_data_layer";
 import { Modal, Field, TextInput, Select, Button, FormError, Toast } from "./FormKit";
@@ -144,7 +145,10 @@ export default function ResepManager() {
     return m;
   }, [bahanList]);
 
-  const produkHPP = useMemo(() => recalcSemua(bahanList, produkList, resepData), [bahanList, produkList, resepData]);
+  // Bahan yang sudah dihapus tidak boleh muncul lagi di pilihan "Tambah Bahan".
+  const activeBahanList = useMemo(() => filterAktif(bahanList), [bahanList]);
+
+  const produkHPP = useMemo(() => recalcSemua(filterAktif(bahanList), activeProdukList, resepData), [bahanList, activeProdukList, resepData]);
   const hppMap = useMemo(() => {
     const m = {};
     produkHPP.forEach(p => { m[p.ID_PRODUK] = p; });
@@ -439,7 +443,7 @@ export default function ResepManager() {
           mode="add"
           idProduk={activeProdukId}
           produkNama={selected.NAMA_PRODUK}
-          bahanList={bahanList}
+          bahanList={activeBahanList}
           existingIds={resepProduk.map(r => r.ID_BAHAN)}
           onClose={() => setShowAddItem(false)}
           onDone={async (nama) => { setShowAddItem(false); await reload(); flashToast(`"${nama}" ditambahkan ke resep`); }}
