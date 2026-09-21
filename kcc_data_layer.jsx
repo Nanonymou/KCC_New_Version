@@ -190,6 +190,16 @@ export const deleteResepItem = (token, data) => gasRun("apiResepDeleteItem", { t
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Format helpers ────────────────────────────────────────────
+// Bahan/Produk yang sudah dihapus (soft-delete → AKTIF=false) tetap ada di
+// baris resep/pembelian lama untuk riwayat, tapi tidak boleh lagi ikut
+// dihitung di HPP/margin/rekomendasi manapun, dan tidak boleh muncul lagi
+// di daftar pilihan. Pakai helper ini di setiap tempat yang menerima
+// bahanList/produkList mentah dari fetch sebelum dipakai untuk kalkulasi
+// atau ditampilkan sebagai daftar "saat ini".
+export function filterAktif(list) {
+  return (list || []).filter(x => x.AKTIF !== false);
+}
+
 export function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
