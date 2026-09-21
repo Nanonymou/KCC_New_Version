@@ -693,7 +693,7 @@ function ResepItemModal({ token, mode, idProduk, produkNama, yieldPcs = 1, bahan
       <FormError>{error}</FormError>
       {!isEdit && (
         available.length === 0 ? (
-          <div style={{ fontSize: 13, color: "#d99a4e" }}>Semua bahan sudah ada di resep ini.</div>
+          <div style={{ fontSize: 13, color: "#d99a4e" }}>{bahanList.length === 0 ? "Belum ada bahan aktif. Tambahkan bahan di menu Inventory dulu." : "Semua bahan sudah ada di resep ini."}</div>
         ) : (
           <Field label="Bahan">
             <Select value={idBahan} onChange={e => setIdBahan(e.target.value)}>
