@@ -11,6 +11,7 @@ import {
   fetchPembelian,
   createPurchase,
   voidPurchase,
+  deletePurchase,
   createSupplier,
   deactivateSupplier,
   createBahan,
@@ -57,7 +58,7 @@ function Card({ children, style = {} }) {
 const STATUS_COLOR = {
   Diterima: "#7fa86a",
   Pending:  "#d99a4e",
-  Batal:    "#d1685c",
+  Void:     "#d1685c",
 };
 
 export default function PembelianManager() {
@@ -103,6 +104,24 @@ export default function PembelianManager() {
       window.alert("Gagal membatalkan: " + (e.message || "kesalahan server"));
     } finally {
       setVoidingId(null);
+    }
+  }
+
+  // Hapus permanen PO yang sudah Void — baris ikut hilang dari histori, dan
+  // karena "Total Belanja" hanya menjumlah PO yang belum Void, angka totalnya
+  // otomatis ikut ter-update begitu baris ini hilang (tidak perlu hitung ulang manual).
+  const [deletingId, setDeletingId] = useState(null);
+  async function handleDeletePurchase(id) {
+    if (!window.confirm(`Hapus permanen catatan pembelian ${id}? Tindakan ini tidak bisa dibatalkan.`)) return;
+    setDeletingId(id);
+    try {
+      await deletePurchase(token, id);
+      await reload();
+      flashToast(`Catatan pembelian ${id} dihapus`);
+    } catch (e) {
+      window.alert("Gagal menghapus: " + (e.message || "kesalahan server"));
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -173,22 +192,29 @@ export default function PembelianManager() {
   }, [pembelianRows, filterStatus, searchQ]);
 
   // KPI
-  const totalBelanja   = pembelianRows.reduce((s, r) => s + r.TOTAL, 0);
+  // PO yang sudah dibatalkan (status "Void") TIDAK dihitung sebagai belanja —
+  // sebelumnya Total Belanja menjumlah semua baris apa adanya dari database,
+  // termasuk yang sudah dibatalkan, jadi angkanya lebih besar dari uang yang
+  // benar-benar keluar. Baris Void tetap tersimpan (untuk jejak/histori),
+  // hanya tidak ikut dijumlah di sini.
+  const rowsBukanVoid  = pembelianRows.filter(r => r.STATUS !== "Void");
+  const totalBelanja   = rowsBukanVoid.reduce((s, r) => s + r.TOTAL, 0);
   const totalDiterima  = pembelianRows.filter(r => r.STATUS === "Diterima").reduce((s, r) => s + r.TOTAL, 0);
   const totalPending   = pembelianRows.filter(r => r.STATUS === "Pending").reduce((s, r) => s + r.TOTAL, 0);
   const jmlTransaksi   = pembelianRows.length;
 
-  // Supplier summary
+  // Supplier summary — PO yang Void tidak ikut dihitung, dengan alasan yang
+  // sama seperti Total Belanja di atas.
   const supplierSummary = useMemo(() => {
     const map = {};
-    pembelianRows.forEach(r => {
+    rowsBukanVoid.forEach(r => {
       const sId = r.ID_SUPPLIER;
       if (!map[sId]) map[sId] = { supplier: r.SUPPLIER, total: 0, transaksi: 0 };
       map[sId].total     += r.TOTAL;
       map[sId].transaksi += 1;
     });
     return Object.values(map).sort((a, b) => b.total - a.total);
-  }, [pembelianRows]);
+  }, [rowsBukanVoid]);
 
   // Reorder recommendations (stok < min)
   const reorderList = useMemo(() =>
@@ -235,7 +261,7 @@ export default function PembelianManager() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
         {[
           { label: "Total Transaksi", value: jmlTransaksi, accent: "#c96442", icon: "📄" },
-          { label: "Total Belanja",   value: idr(totalBelanja), accent: "#a9a49a", icon: "💳" },
+          { label: "Total Belanja",   value: idr(totalBelanja), accent: "#a9a49a", icon: "💳", sub: "Di luar PO yang dibatalkan (Void)" },
           { label: "Sudah Diterima",  value: idr(totalDiterima), accent: "#7fa86a", icon: "✅" },
           { label: "Pending",         value: idr(totalPending), accent: "#d99a4e", icon: "⏳" },
         ].map(k => (
@@ -244,6 +270,7 @@ export default function PembelianManager() {
               <div>
                 <div style={{ fontSize: 11, color: "#8a857b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>{k.label}</div>
                 <div style={{ fontSize: k.label === "Total Transaksi" ? 28 : 18, fontWeight: 800, color: k.accent, letterSpacing: "-0.02em" }}>{k.value}</div>
+                {k.sub && <div style={{ fontSize: 10.5, color: "#615d55", marginTop: 3 }}>{k.sub}</div>}
               </div>
               <div style={{ fontSize: 20, opacity: 0.6 }}>{k.icon}</div>
             </div>
@@ -284,7 +311,7 @@ export default function PembelianManager() {
                 }}
               />
               <div style={{ display: "flex", gap: 6 }}>
-                {["Semua", "Diterima", "Pending", "Batal"].map(s => (
+                {["Semua", "Diterima", "Pending", "Void"].map(s => (
                   <button
                     key={s}
                     onClick={() => setFilterStatus(s)}
@@ -356,7 +383,7 @@ export default function PembelianManager() {
                       </td>
                       {canWrite && (
                         <td style={S.td}>
-                          {r.STATUS !== "Void" && r.STATUS !== "Batal" ? (
+                          {r.STATUS !== "Void" ? (
                             <button
                               onClick={() => handleVoid(r.ID_PO)}
                               disabled={voidingId === r.ID_PO}
@@ -369,7 +396,22 @@ export default function PembelianManager() {
                             >
                               {voidingId === r.ID_PO ? "…" : "Batalkan"}
                             </button>
-                          ) : <span style={{ color: "#615d55" }}>—</span>}
+                          ) : (
+                            <button
+                              onClick={() => handleDeletePurchase(r.ID_PO)}
+                              disabled={deletingId === r.ID_PO}
+                              title="Hapus permanen catatan ini"
+                              style={{
+                                padding: "4px 10px", fontSize: 11.5, fontWeight: 600,
+                                color: "#8a857b", background: "rgba(138,133,123,0.10)",
+                                border: "1px solid rgba(138,133,123,0.32)", borderRadius: 6,
+                                cursor: deletingId === r.ID_PO ? "wait" : "pointer",
+                                opacity: deletingId === r.ID_PO ? 0.6 : 1,
+                              }}
+                            >
+                              {deletingId === r.ID_PO ? "…" : "🗑 Hapus"}
+                            </button>
+                          )}
                         </td>
                       )}
                     </tr>
