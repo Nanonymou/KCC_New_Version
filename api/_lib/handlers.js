@@ -479,6 +479,55 @@ async function genDatedId(client, outletId, prefix, dateStr) {
   return `${prefix}-${compact}-${String(rows[0].value).padStart(3, '0')}`;
 }
 
+// ─── Maintenance: hapus sisa data contoh (seed lama) ─────────────────────────
+// Database yang sudah terlanjur di-provision SEBELUM data contoh dibuang dari
+// seed.js masih menyimpan baris-baris contoh itu (seedIfEmpty() tidak jalan
+// lagi begitu outlet sudah ada, jadi mengubah seed.js saja tidak membersihkan
+// apa pun). Handler ini menghapus HANYA baris ber-ID contoh yang dikenal, di
+// outlet milik sesi yang memanggil. Data yang diinput lewat aplikasi selalu
+// mendapat id hasil genId() (B011+, P006+, S019+, PO bernomor sendiri),
+// sehingga tidak pernah bertabrakan dengan id di bawah dan tidak pernah ikut
+// terhapus.
+const SEED_BAHAN_IDS    = Array.from({ length: 10 }, (_, i) => `B${String(i + 1).padStart(3, '0')}`);
+const SEED_PRODUK_IDS   = Array.from({ length: 5 },  (_, i) => `P${String(i + 1).padStart(3, '0')}`);
+const SEED_SUPPLIER_IDS = Array.from({ length: 18 }, (_, i) => `S${String(i + 1).padStart(3, '0')}`);
+
+async function apiPurgeSeedData(p) {
+  const s = await requireSession(p);
+  const o = s.outletId;
+  const deleted = {};
+  const countOf = (r) => Number(r.rows?.[0]?.c ?? 0);
+
+  deleted.resep = countOf(await sql`SELECT COUNT(*)::int AS c FROM resep WHERE outlet_id=${o} AND (id_produk = ANY(${SEED_PRODUK_IDS}) OR id_bahan = ANY(${SEED_BAHAN_IDS}));`);
+  await sql`DELETE FROM resep WHERE outlet_id=${o} AND (id_produk = ANY(${SEED_PRODUK_IDS}) OR id_bahan = ANY(${SEED_BAHAN_IDS}));`;
+
+  deleted.pembelian = countOf(await sql`SELECT COUNT(*)::int AS c FROM pembelian WHERE outlet_id=${o} AND id_po LIKE 'PO-2026%';`);
+  await sql`DELETE FROM pembelian WHERE outlet_id=${o} AND id_po LIKE 'PO-2026%';`;
+
+  deleted.stok = countOf(await sql`SELECT COUNT(*)::int AS c FROM stok WHERE outlet_id=${o} AND id_bahan = ANY(${SEED_BAHAN_IDS});`);
+  await sql`DELETE FROM stok WHERE outlet_id=${o} AND id_bahan = ANY(${SEED_BAHAN_IDS});`;
+
+  deleted.stok_movements = countOf(await sql`SELECT COUNT(*)::int AS c FROM stok_movements WHERE outlet_id=${o} AND id_bahan = ANY(${SEED_BAHAN_IDS});`);
+  await sql`DELETE FROM stok_movements WHERE outlet_id=${o} AND id_bahan = ANY(${SEED_BAHAN_IDS});`;
+
+  deleted.penjualan = countOf(await sql`SELECT COUNT(*)::int AS c FROM penjualan WHERE outlet_id=${o} AND id_produk = ANY(${SEED_PRODUK_IDS});`);
+  await sql`DELETE FROM penjualan WHERE outlet_id=${o} AND id_produk = ANY(${SEED_PRODUK_IDS});`;
+
+  deleted.supplier = countOf(await sql`SELECT COUNT(*)::int AS c FROM supplier WHERE outlet_id=${o} AND id = ANY(${SEED_SUPPLIER_IDS});`);
+  await sql`DELETE FROM supplier WHERE outlet_id=${o} AND id = ANY(${SEED_SUPPLIER_IDS});`;
+
+  deleted.produk = countOf(await sql`SELECT COUNT(*)::int AS c FROM produk WHERE outlet_id=${o} AND id = ANY(${SEED_PRODUK_IDS});`);
+  await sql`DELETE FROM produk WHERE outlet_id=${o} AND id = ANY(${SEED_PRODUK_IDS});`;
+
+  deleted.bahan = countOf(await sql`SELECT COUNT(*)::int AS c FROM bahan WHERE outlet_id=${o} AND id = ANY(${SEED_BAHAN_IDS});`);
+  await sql`DELETE FROM bahan WHERE outlet_id=${o} AND id = ANY(${SEED_BAHAN_IDS});`;
+
+  await sql`DELETE FROM counters WHERE outlet_id=${o} AND name LIKE 'po:202606%';`;
+
+  const total = Object.values(deleted).reduce((a, b) => a + b, 0);
+  return ok({ deleted, total });
+}
+
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 // Minimum role required per privileged action. Anything not listed only needs
@@ -491,6 +540,8 @@ const ROLE_REQUIRED = {
   apiResepAddItem: 'ADMIN', apiResepUpdateItem: 'ADMIN', apiResepDeleteItem: 'ADMIN',
   apiInvPurchaseCreate: 'ADMIN', apiInvPurchaseVoid: 'ADMIN', apiInvAdjustment: 'ADMIN',
   apiSetAppConfig: 'ADMIN',
+  // maintenance: purge sisa data contoh (hanya pemilik outlet tertinggi)
+  apiPurgeSeedData: 'SUPER_ADMIN',
   // cashier-level: recording sales
   apiInvSalesCreate: 'KASIR',
 };
@@ -524,6 +575,8 @@ const RAW_HANDLERS = {
   apiInvPurchaseCreate, apiInvPurchaseVoid, apiInvSalesCreate, apiInvAdjustment,
   // config
   apiSetAppConfig,
+  // maintenance
+  apiPurgeSeedData,
 };
 
 // Apply per-action role guards (reads/auth pass through untouched).
