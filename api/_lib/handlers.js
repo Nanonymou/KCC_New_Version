@@ -92,8 +92,11 @@ async function apiGetDashboardSummary(p) {
     sql`SELECT COUNT(*)::int AS c FROM bahan WHERE outlet_id = ${s.outletId} AND active;`,
     sql`SELECT COUNT(*)::int AS c FROM stok WHERE outlet_id = ${s.outletId} AND stok < min_stok;`,
     sql`SELECT COUNT(*)::int AS c FROM produk WHERE outlet_id = ${s.outletId} AND active;`,
+    // PO yang sudah dibatalkan (status='Void') tidak dihitung sebagai
+    // belanja — kalau ikut dijumlah, total belanja jadi lebih besar dari
+    // yang sebenarnya dikeluarkan.
     sql`SELECT COALESCE(SUM(total),0) AS t, COUNT(*)::int AS c
-        FROM pembelian WHERE outlet_id = ${s.outletId}
+        FROM pembelian WHERE outlet_id = ${s.outletId} AND status != 'Void'
         AND date_trunc('month', tanggal) = date_trunc('month', CURRENT_DATE);`,
   ]);
 
@@ -283,6 +286,26 @@ async function apiInvPurchaseCreate(p) {
   } finally {
     client.release();
   }
+}
+// Hapus permanen satu baris pembelian. Hanya boleh untuk PO yang statusnya
+// sudah 'Void' — stok sudah dikembalikan saat void, jadi hapus di sini
+// murni membuang catatan lama, tidak menyentuh stok lagi. PO yang masih
+// 'Diterima'/'Pending' TIDAK bisa langsung dihapus (harus dibatalkan/void
+// dulu), supaya histori pembelian yang masih berlaku tidak pernah hilang
+// tanpa sengaja.
+async function apiInvPurchaseDelete(p) {
+  const s = await requireSession(p);
+  const id = p.ID_PO || p.id;
+  const { rows } = await sql`
+    DELETE FROM pembelian
+    WHERE outlet_id=${s.outletId} AND id_po=${id} AND status='Void'
+    RETURNING id_po;`;
+  if (!rows[0]) {
+    const err = new Error('PO tidak ditemukan atau belum dibatalkan (void) — batalkan dulu sebelum menghapus.');
+    err.code = 'NOT_VOID';
+    throw err;
+  }
+  return ok({ ID_PO: id, deleted: true });
 }
 async function apiInvPurchaseVoid(p) {
   const s = await requireSession(p);
@@ -538,7 +561,7 @@ const ROLE_REQUIRED = {
   apiProdukCreate: 'ADMIN', apiProdukUpdate: 'ADMIN', apiProdukDeactivate: 'ADMIN', apiProdukReactivate: 'ADMIN',
   apiSupplierCreate: 'ADMIN', apiSupplierUpdate: 'ADMIN', apiSupplierDeactivate: 'ADMIN', apiSupplierReactivate: 'ADMIN',
   apiResepAddItem: 'ADMIN', apiResepUpdateItem: 'ADMIN', apiResepDeleteItem: 'ADMIN',
-  apiInvPurchaseCreate: 'ADMIN', apiInvPurchaseVoid: 'ADMIN', apiInvAdjustment: 'ADMIN',
+  apiInvPurchaseCreate: 'ADMIN', apiInvPurchaseVoid: 'ADMIN', apiInvPurchaseDelete: 'ADMIN', apiInvAdjustment: 'ADMIN',
   apiSetAppConfig: 'ADMIN',
   // maintenance: purge sisa data contoh (hanya pemilik outlet tertinggi)
   apiPurgeSeedData: 'SUPER_ADMIN',
@@ -572,7 +595,7 @@ const RAW_HANDLERS = {
   // recipe writes
   apiResepAddItem, apiResepUpdateItem, apiResepDeleteItem,
   // inventory writes
-  apiInvPurchaseCreate, apiInvPurchaseVoid, apiInvSalesCreate, apiInvAdjustment,
+  apiInvPurchaseCreate, apiInvPurchaseVoid, apiInvPurchaseDelete, apiInvSalesCreate, apiInvAdjustment,
   // config
   apiSetAppConfig,
   // maintenance
