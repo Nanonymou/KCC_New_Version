@@ -11,6 +11,7 @@ import {
   fetchResep,
   fetchStok,
   fetchDashboard,
+  purgeSeedData,
   recalcSemua,
   filterAktif,
   round2, idr, pct,
@@ -249,6 +250,36 @@ export default function KCCDashboard() {
     topSelling, topMargin, topProfit, hargaNaik, stokMinimum,
   } = data;
 
+  // Deteksi sisa data contoh bawaan yang masih tersimpan di database dari
+  // provisioning lama (id B001–B010 / P001–P005). Database yang sudah
+  // terlanjur dibuat sebelum data contoh dibuang dari seed.js tidak ikut
+  // bersih hanya dengan memperbarui kode, jadi tawarkan pembersihannya di sini.
+  const sisaSeed = useMemo(() => {
+    const isSeedBahan  = (id) => /^B0(0[1-9]|10)$/.test(id || "");
+    const isSeedProduk = (id) => /^P00[1-5]$/.test(id || "");
+    return bahan.filter(b => isSeedBahan(b.ID_BAHAN)).length
+         + produkList.filter(p => isSeedProduk(p.ID_PRODUK)).length;
+  }, [bahan, produkList]);
+
+  const [purging, setPurging] = useState(false);
+
+  async function handlePurgeSeed() {
+    if (!window.confirm(
+      `Hapus ${sisaSeed} data contoh bawaan yang masih tersisa di database?\n\n` +
+      `Hanya bahan/produk/supplier/pembelian contoh bawaan (B001–B010, P001–P005, S001–S018) yang dihapus. ` +
+      `Semua data yang kamu input sendiri lewat aplikasi TIDAK ikut terhapus.`
+    )) return;
+    setPurging(true);
+    try {
+      const res = await purgeSeedData(token);
+      window.alert(`Selesai — ${res?.total ?? 0} baris data contoh dihapus. Halaman akan dimuat ulang.`);
+      window.location.reload();
+    } catch (e) {
+      window.alert("Gagal membersihkan data contoh: " + (e.message || "kesalahan server"));
+      setPurging(false);
+    }
+  }
+
   const maxQty    = Math.max(...topSelling.map(p => p.QTY), 1);
   const maxProfit = Math.max(...topProfit.map(p => p.TOTAL_PROFIT), 1);
 
@@ -300,6 +331,32 @@ export default function KCCDashboard() {
               : "Memuat data…"}
           </div>
         </div>
+
+      {/* ── Banner: sisa data contoh bawaan di database ── */}
+      {!isDemo && status === "ready" && sisaSeed > 0 && (
+        <div style={{
+          marginBottom: 16, padding: "13px 16px", borderRadius: 10,
+          background: "rgba(217,154,78,0.10)", border: "1px solid rgba(217,154,78,0.35)",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap",
+        }}>
+          <div style={{ fontSize: 13, color: T.text, lineHeight: 1.5 }}>
+            <strong>Masih ada {sisaSeed} data contoh bawaan di database.</strong>
+            <div style={{ color: T.textFaint, fontSize: 12.5, marginTop: 3 }}>
+              Ini sisa dari pembuatan database awal, itulah kenapa masih muncul di "Harga Bahan Naik" & "Stok Minimum".
+              Menghapusnya tidak akan menyentuh data yang kamu input sendiri.
+            </div>
+          </div>
+          <button
+            onClick={handlePurgeSeed}
+            disabled={purging}
+            style={{
+              flexShrink: 0, padding: "9px 16px", fontSize: 13, fontWeight: 600, borderRadius: 8,
+              color: "#fff", background: T.primary, border: "none",
+              cursor: purging ? "wait" : "pointer", opacity: purging ? 0.65 : 1,
+            }}
+          >{purging ? "Membersihkan…" : "Bersihkan Data Contoh"}</button>
+        </div>
+      )}
 
       {/* ── KPI Row ── */}
         <div className="dash-grid kpi-grid" style={{ marginBottom: 16 }}>
