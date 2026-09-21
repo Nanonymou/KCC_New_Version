@@ -19,6 +19,7 @@ import {
   round2, idr,
 } from "./kcc_data_layer";
 import { Modal, Field, TextInput, Select, Button, FormError, Toast } from "./FormKit";
+import KonversiInput from "./KonversiInput";
 
 const S = {
   card: {
@@ -526,36 +527,6 @@ function AddBahanModal({ token, bahanList = [], pembelianList = [], onClose, onD
     return { beli: [...beli].sort(), pakai: [...pakai].sort() };
   }, [bahanList]);
 
-  // Konversi yang paling sering dipakai untuk pasangan satuan beli→pakai
-  // tertentu (mis. kg→gram biasanya 1000), dihitung dari bahan yang sudah ada.
-  const konversiByPair = useMemo(() => {
-    const freq = {};
-    bahanList.forEach(b => {
-      if (!b.SATUAN_BELI || !b.SATUAN_PAKAI || !b.KONVERSI) return;
-      const key = `${b.SATUAN_BELI.trim().toLowerCase()}→${b.SATUAN_PAKAI.trim().toLowerCase()}`;
-      (freq[key] ??= {})[b.KONVERSI] = (freq[key]?.[b.KONVERSI] || 0) + 1;
-    });
-    const best = {};
-    Object.entries(freq).forEach(([key, counts]) => {
-      let bestVal = null, bestCount = 0;
-      Object.entries(counts).forEach(([val, c]) => { if (c > bestCount) { bestCount = c; bestVal = Number(val); } });
-      best[key] = bestVal;
-    });
-    return best;
-  }, [bahanList]);
-
-  const pairKey = `${satuanBeli.trim().toLowerCase()}→${satuanPakai.trim().toLowerCase()}`;
-  const konversiSuggested = konversiByPair[pairKey];
-
-  // Auto-isi konversi saat pasangan satuan cocok dengan pola bahan lain —
-  // hanya jika user belum mengetik konversi manual sendiri.
-  useEffect(() => {
-    if (konversiTouched) return;
-    if (konversiSuggested != null && String(konversiSuggested) !== konversi) {
-      setKonversi(String(konversiSuggested));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pairKey, konversiSuggested, konversiTouched]);
 
   // Rata-rata & harga terakhir per bahan, dihitung dari histori Pembelian
   // berstatus Diterima (tertimbang qty), supaya harga mencerminkan realisasi
@@ -601,8 +572,11 @@ function AddBahanModal({ token, bahanList = [], pembelianList = [], onClose, onD
 
   async function submit() {
     setError(null);
-    if (!nama.trim())          return setError("Nama bahan wajib diisi.");
-    if (!(Number(harga) > 0))  return setError("Harga rata-rata harus lebih dari 0.");
+    if (!nama.trim())            return setError("Nama bahan wajib diisi.");
+    if (!satuanBeli.trim())      return setError("Satuan beli wajib dipilih.");
+    if (!satuanPakai.trim())     return setError("Satuan pakai wajib dipilih.");
+    if (!(Number(konversi) > 0)) return setError("Konversi harus diisi dan lebih dari 0.");
+    if (!(Number(harga) > 0))    return setError("Harga rata-rata harus lebih dari 0.");
     setSaving(true);
     try {
       // Bahan + opening stock are created atomically in one backend call, so a
@@ -658,37 +632,14 @@ function AddBahanModal({ token, bahanList = [], pembelianList = [], onClose, onD
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Field label="Satuan Beli" hint="Dari satuan yang sudah dipakai di pembelian">
-          <TextInput
-            list="kcc-satuan-beli-opts" value={satuanBeli}
-            onChange={e => setSatuanBeli(e.target.value)} placeholder="kg"
-          />
-          <datalist id="kcc-satuan-beli-opts">
-            {unitOptions.beli.map(u => <option key={u} value={u} />)}
-          </datalist>
-        </Field>
-        <Field label="Satuan Pakai" hint="Dari satuan yang sudah dipakai di resep">
-          <TextInput
-            list="kcc-satuan-pakai-opts" value={satuanPakai}
-            onChange={e => setSatuanPakai(e.target.value)} placeholder="gram"
-          />
-          <datalist id="kcc-satuan-pakai-opts">
-            {unitOptions.pakai.map(u => <option key={u} value={u} />)}
-          </datalist>
-        </Field>
-        <Field
-          label="Konversi"
-          hint={konversiSuggested != null && !konversiTouched
-            ? `Disarankan dari pola pembelian bahan lain (${satuanBeli}→${satuanPakai})`
-            : "1 satuan beli = ? satuan pakai"}
-        >
-          <TextInput
-            type="number" min="1" step="any" value={konversi}
-            onChange={e => { setKonversi(e.target.value); setKonversiTouched(true); }}
-          />
-        </Field>
-      </div>
+      <KonversiInput
+        satuanBeli={satuanBeli} setSatuanBeli={setSatuanBeli}
+        satuanPakai={satuanPakai} setSatuanPakai={setSatuanPakai}
+        konversi={konversi} setKonversi={setKonversi}
+        manual={konversiTouched} setManual={setKonversiTouched}
+        harga={harga}
+        unitOptions={unitOptions}
+      />
       <Field
         label="Harga Rata-rata / satuan beli"
         hint={historyMatch?.stats?.rataRata ? "Bisa disamakan dengan rata-rata harga pembelian di atas" : undefined}
@@ -712,6 +663,9 @@ function EditBahanModal({ token, row, onClose, onDone }) {
   const [satuanBeli, setSatuanBeli]   = useState(row.SATUAN_BELI || "");
   const [satuanPakai, setSatuanPakai] = useState(row.SATUAN_PAKAI || "");
   const [konversi, setKonversi]       = useState(String(row.KONVERSI ?? "1"));
+  // Mulai dalam mode manual supaya konversi yang sudah tersimpan tidak
+  // langsung ditimpa nilai otomatis saat modal dibuka.
+  const [konversiManual, setKonversiManual] = useState(true);
   const [harga, setHarga]             = useState(String(row.HARGA_RATA2 ?? "0"));
   const [saving, setSaving]           = useState(false);
   const [error, setError]             = useState(null);
@@ -752,17 +706,13 @@ function EditBahanModal({ token, row, onClose, onDone }) {
       <Field label="Nama Bahan">
         <TextInput value={nama} onChange={e => setNama(e.target.value)} autoFocus />
       </Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Field label="Satuan Beli">
-          <TextInput value={satuanBeli} onChange={e => setSatuanBeli(e.target.value)} placeholder="kg" />
-        </Field>
-        <Field label="Satuan Pakai">
-          <TextInput value={satuanPakai} onChange={e => setSatuanPakai(e.target.value)} placeholder="gram" />
-        </Field>
-        <Field label="Konversi" hint="1 satuan beli = ? satuan pakai">
-          <TextInput type="number" min="0.0001" step="any" value={konversi} onChange={e => setKonversi(e.target.value)} />
-        </Field>
-      </div>
+      <KonversiInput
+        satuanBeli={satuanBeli} setSatuanBeli={setSatuanBeli}
+        satuanPakai={satuanPakai} setSatuanPakai={setSatuanPakai}
+        konversi={konversi} setKonversi={setKonversi}
+        manual={konversiManual} setManual={setKonversiManual}
+        harga={harga}
+      />
       <Field label={`Harga Rata-rata / ${satuanBeli || "satuan beli"}`}>
         <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} placeholder="0" />
       </Field>
