@@ -85,6 +85,7 @@ export default function ResepManager() {
   const [deletingProdukId, setDeletingProdukId] = useState(null);
   const [showInactiveProduk, setShowInactiveProduk] = useState(false);
   const [editProduk, setEditProduk] = useState(null); // produk sedang diedit (nama/kategori/harga/mode)
+  const [dupProduk, setDupProduk] = useState(null);   // produk sumber yang sedang diduplikat
 
   async function handleDeleteItem(idProduk, idBahan, nama) {
     if (deletingKey === idBahan) return; // already in flight
@@ -345,6 +346,15 @@ export default function ResepManager() {
                       }}
                     >✏️ Edit</button>
                     <button
+                      onClick={() => setDupProduk(selected)}
+                      title="Salin resep ini (beserta bahannya) menjadi resep baru"
+                      style={{
+                        padding: "8px 14px", fontSize: 13, fontWeight: 600,
+                        color: "#c96442", background: "rgba(201,100,66,0.10)",
+                        border: "1px solid rgba(201,100,66,0.32)", borderRadius: 8, cursor: "pointer",
+                      }}
+                    >⧉ Duplikat</button>
+                    <button
                       onClick={() => handleDeleteProduk(selected)}
                       disabled={deletingProdukId === selected.ID_PRODUK}
                       title="Hapus resep ini"
@@ -485,6 +495,26 @@ export default function ResepManager() {
           onDone={async () => { const n = editProduk.NAMA_PRODUK; setEditProduk(null); await reload(); flashToast(`Produk "${n}" diperbarui`); }}
         />
       )}
+      {dupProduk && (
+        <DuplikatResepModal
+          token={token}
+          source={dupProduk}
+          items={resepData.filter(r => r.ID_PRODUK === dupProduk.ID_PRODUK)}
+          bahanMap={bahanMap}
+          existingNames={produkList.map(p => (p.NAMA_PRODUK || "").trim().toLowerCase())}
+          onClose={() => setDupProduk(null)}
+          onDone={async ({ id, nama, copied, skipped }) => {
+            setDupProduk(null);
+            await reload();
+            if (id) setSelectedProduk(id);
+            flashToast(
+              `Resep "${nama}" dibuat dari salinan (${copied} bahan)` +
+              (skipped ? ` · ${skipped} bahan nonaktif dilewati` : "") +
+              " — silakan revisi"
+            );
+          }}
+        />
+      )}
       <Toast show={!!toast}>{toast}</Toast>
     </div>
   );
@@ -582,6 +612,79 @@ function AddProdukModal({ token, onClose, onDone }) {
       <Field label="Harga Jual / porsi">
         <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} placeholder="0" />
       </Field>
+    </Modal>
+  );
+}
+
+// ─── Duplikat Resep modal ────────────────────────────────────────────────────
+// Menyalin produk + seluruh komposisi bahannya jadi resep baru, supaya varian
+// (mis. "Dimsum Ayam Pedas") cukup direvisi, tidak perlu input ulang dari nol.
+// Bahan nonaktif tidak ikut disalin. Kalau penyalinan bahan gagal di tengah
+// jalan, produk baru yang setengah jadi otomatis dinonaktifkan.
+function DuplikatResepModal({ token, source, items = [], bahanMap = {}, existingNames = [], onClose, onDone }) {
+  const [nama, setNama]         = useState(`${source.NAMA_PRODUK} (Salinan)`);
+  const [kategori, setKategori] = useState(source.KATEGORI || "");
+  const [harga, setHarga]       = useState(String(source.HARGA_JUAL ?? "0"));
+  const [saving, setSaving]     = useState(false);
+  const [error, setError]       = useState(null);
+
+  const copyable = items.filter(r => bahanMap[r.ID_BAHAN] && bahanMap[r.ID_BAHAN].AKTIF !== false);
+  const skipped  = items.length - copyable.length;
+  const yieldPcs = Number(source.YIELD_PCS) || 1;
+
+  async function submit() {
+    setError(null);
+    const n = nama.trim();
+    if (!n)                     return setError("Nama resep baru wajib diisi.");
+    if (existingNames.includes(n.toLowerCase())) return setError("Nama sudah dipakai resep lain — ganti nama supaya tidak bingung.");
+    if (!(Number(harga) > 0))   return setError("Harga jual harus lebih dari 0.");
+    setSaving(true);
+    let newId = null;
+    try {
+      const res = await createProduk(token, {
+        NAMA_PRODUK: n, KATEGORI: kategori.trim() || "Lainnya",
+        HARGA_JUAL: Number(harga), YIELD_PCS: yieldPcs,
+      });
+      newId = res?.data?.ID_PRODUK;
+      if (!newId) throw new Error("ID produk baru tidak diterima dari server.");
+      for (const r of copyable) {
+        await addResepItem(token, { ID_PRODUK: newId, ID_BAHAN: r.ID_BAHAN, JUMLAH: Number(r.JUMLAH) });
+      }
+      onDone({ id: newId, nama: n, copied: copyable.length, skipped });
+    } catch (e) {
+      if (newId) { try { await deactivateProduk(token, newId); } catch { /* abaikan */ } }
+      setError((e.message || "Gagal menduplikat resep.") + (newId ? " Resep setengah jadi sudah dinonaktifkan." : ""));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Duplikat Resep"
+      subtitle={`Salin dari: ${source.NAMA_PRODUK}`}
+      onClose={onClose}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Batal</Button>
+        <Button onClick={submit} loading={saving}>Duplikat Resep</Button>
+      </>}
+    >
+      <FormError>{error}</FormError>
+      <Field label="Nama Resep Baru">
+        <TextInput value={nama} onChange={e => setNama(e.target.value)} autoFocus onFocus={e => e.target.select()} />
+      </Field>
+      <Field label="Kategori"><TextInput value={kategori} onChange={e => setKategori(e.target.value)} /></Field>
+      <Field label="Harga Jual / porsi">
+        <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} />
+      </Field>
+      <div style={{
+        fontSize: 12.5, color: "#8a857b", lineHeight: 1.6, padding: "10px 12px",
+        background: "rgba(138,133,123,0.08)", border: "1px solid rgba(138,133,123,0.2)", borderRadius: 8,
+      }}>
+        Ikut disalin: <b style={{ color: "#ecebe5" }}>{copyable.length} bahan</b> beserta jumlahnya
+        {yieldPcs > 1 ? ` · mode batch (${yieldPcs} porsi)` : " · mode per porsi"}.
+        {skipped > 0 && <div style={{ color: "#d99a4e" }}>{skipped} bahan nonaktif tidak ikut disalin.</div>}
+        <div>Setelah dibuat, resep baru langsung terbuka untuk direvisi (ubah jumlah, hapus, atau tambah bahan).</div>
+      </div>
     </Modal>
   );
 }
