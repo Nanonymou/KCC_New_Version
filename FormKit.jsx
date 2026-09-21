@@ -5,6 +5,7 @@
  */
 
 import { useEffect, useId, useRef, cloneElement, isValidElement } from "react";
+import { createPortal } from "react-dom";
 import { T } from "./theme";
 
 // ─── Modal ────────────────────────────────────────────────────────────────
@@ -26,7 +27,10 @@ export function Modal({ title, subtitle, onClose, children, footer, width = 460 
     return () => { if (prev && prev.focus) prev.focus(); };
   }, []);
 
-  return (
+  // Render into document.body: the page wrapper in App.jsx is animated with a
+  // transform, which turns it into the containing block of position:fixed
+  // descendants and clips the overlay to the content column.
+  return createPortal(
     <div
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
       style={{
@@ -63,7 +67,8 @@ export function Modal({ title, subtitle, onClose, children, footer, width = 460 
           }}>{footer}</div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -159,12 +164,13 @@ export function FormError({ children }) {
 // Small toast for success feedback after a mutation.
 export function Toast({ show, children }) {
   if (!show) return null;
-  return (
+  return createPortal(
     <div style={{
       position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", zIndex: 600,
       background: T.successSoft, color: T.success, border: `1px solid ${T.success}55`,
       borderRadius: 99, padding: "9px 18px", fontSize: 13, fontWeight: 600,
       boxShadow: T.shadowMd, animation: "kcc-modal-in .2s ease both",
-    }}>✓ {children}</div>
+    }}>✓ {children}</div>,
+    document.body
   );
 }
