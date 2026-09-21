@@ -16,6 +16,7 @@ import {
   idr, pct, marginColor,
 } from "./kcc_data_layer";
 import { Modal, Field, TextInput, Button, FormError } from "./FormKit";
+import KonversiInput from "./KonversiInput";
 
 export default function HPPEngine() {
   const { token } = useAuth();
@@ -733,6 +734,8 @@ function EditBahanDetailModal({ token, row, onClose, onDone }) {
   const [satuanBeli, setSatuanBeli]   = useState(row.SATUAN_BELI || "");
   const [satuanPakai, setSatuanPakai] = useState(row.SATUAN_PAKAI || "");
   const [konversi, setKonversi]       = useState(String(row.KONVERSI ?? "1"));
+  // Mulai manual agar konversi tersimpan tidak langsung ditimpa nilai otomatis.
+  const [konversiManual, setKonversiManual] = useState(true);
   const [harga, setHarga]             = useState(String(row.HARGA_RATA2 ?? "0"));
   const [saving, setSaving]           = useState(false);
   const [error, setError]             = useState(null);
@@ -774,17 +777,13 @@ function EditBahanDetailModal({ token, row, onClose, onDone }) {
       <Field label="Nama Bahan">
         <TextInput value={nama} onChange={e => setNama(e.target.value)} autoFocus />
       </Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Field label="Satuan Beli">
-          <TextInput value={satuanBeli} onChange={e => setSatuanBeli(e.target.value)} placeholder="kg" />
-        </Field>
-        <Field label="Satuan Pakai">
-          <TextInput value={satuanPakai} onChange={e => setSatuanPakai(e.target.value)} placeholder="gram" />
-        </Field>
-        <Field label="Konversi" hint="1 satuan beli = ? satuan pakai">
-          <TextInput type="number" min="0.0001" step="any" value={konversi} onChange={e => setKonversi(e.target.value)} />
-        </Field>
-      </div>
+      <KonversiInput
+        satuanBeli={satuanBeli} setSatuanBeli={setSatuanBeli}
+        satuanPakai={satuanPakai} setSatuanPakai={setSatuanPakai}
+        konversi={konversi} setKonversi={setKonversi}
+        manual={konversiManual} setManual={setKonversiManual}
+        harga={harga}
+      />
       <Field label={`Harga Rata-rata / ${satuanBeli || "satuan beli"}`}>
         <TextInput type="number" min="0" step="any" value={harga} onChange={e => setHarga(e.target.value)} placeholder="0" />
       </Field>
