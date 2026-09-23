@@ -204,6 +204,73 @@ async function createSchema() {
     value       BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (outlet_id, name)
   );`;
+
+  // ─── Modul baru: Inventory Harian (retail) ─────────────────────────────────
+  // Terpisah dari bahan/stok/stok_movements (F&B costing) yang sudah ada di atas.
+  // master_items = katalog barang retail per outlet (item_code, brand, size, section).
+  // daily_stock  = 1 baris per (outlet_id, record_date, item), menyimpan seluruh
+  //                kolom mutasi harian + balance akhir — dipakai untuk transaksi
+  //                harian dan dashboard stok.
+  await sql`CREATE TABLE IF NOT EXISTS master_items (
+    id           TEXT NOT NULL,
+    outlet_id    TEXT NOT NULL REFERENCES outlets(id),
+    item_code    TEXT NOT NULL,
+    description  TEXT NOT NULL,
+    brand        TEXT,
+    size         TEXT,
+    unit         TEXT,
+    price        NUMERIC NOT NULL DEFAULT 0,
+    section      TEXT NOT NULL,
+    active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (outlet_id, id)
+  );`;
+  // Item Code unik per outlet, case-insensitive.
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_master_items_code
+    ON master_items (outlet_id, LOWER(item_code));`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_master_items_section
+    ON master_items (outlet_id, section);`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_master_items_active
+    ON master_items (outlet_id, active);`;
+
+  await sql`CREATE TABLE IF NOT EXISTS daily_stock (
+    id           SERIAL PRIMARY KEY,
+    outlet_id    TEXT NOT NULL REFERENCES outlets(id),
+    record_date  DATE NOT NULL,
+    item_id      TEXT NOT NULL,
+
+    -- Kolom mutasi (qty per jalur masuk/keluar).
+    beg_balance  NUMERIC NOT NULL DEFAULT 0,
+    receiving    NUMERIC NOT NULL DEFAULT 0,
+    regular      NUMERIC NOT NULL DEFAULT 0,
+    snack        NUMERIC NOT NULL DEFAULT 0,
+    backcharge   NUMERIC NOT NULL DEFAULT 0,
+    hkl          NUMERIC NOT NULL DEFAULT 0,
+    event        NUMERIC NOT NULL DEFAULT 0,
+    ent          NUMERIC NOT NULL DEFAULT 0,
+    to_qty       NUMERIC NOT NULL DEFAULT 0,
+    spoil        NUMERIC NOT NULL DEFAULT 0,
+
+    -- Derived: beg_balance + receiving − (regular+snack+backcharge+hkl+event+ent+to_qty+spoil).
+    -- Disimpan (bukan dihitung on-the-fly) supaya dashboard/report tinggal SELECT.
+    balance      NUMERIC NOT NULL DEFAULT 0,
+
+    created_by   TEXT REFERENCES users(id) ON DELETE SET NULL,
+    updated_by   TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    FOREIGN KEY (outlet_id, item_id) REFERENCES master_items (outlet_id, id) ON DELETE RESTRICT,
+    -- Satu baris per item per outlet per tanggal — mencegah entri ganda di hari yang sama.
+    UNIQUE (outlet_id, record_date, item_id)
+  );`;
+  // Pola akses utama: semua baris 1 outlet pada 1 tanggal (halaman transaksi harian).
+  await sql`CREATE INDEX IF NOT EXISTS idx_daily_stock_outlet_date
+    ON daily_stock (outlet_id, record_date);`;
+  // Riwayat pergerakan 1 item lintas tanggal (kartu stok per item).
+  await sql`CREATE INDEX IF NOT EXISTS idx_daily_stock_item
+    ON daily_stock (outlet_id, item_id);`;
 }
 
 // ─── Seeding (only if the first outlet does not yet exist) ───────────────────
