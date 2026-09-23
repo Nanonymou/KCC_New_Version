@@ -6,6 +6,9 @@ import KCCRecommendationEngine from "./KCC_RecommendationEngine";
 import ResepManager            from "./ResepManager";
 import InventoryManager        from "./InventoryManager";
 import PembelianManager        from "./PembelianManager";
+import MasterItemManager       from "./MasterItemManager";
+import DailyStockManager       from "./DailyStockManager";
+import DashboardStok           from "./DashboardStok";
 import { useAuth }             from "./AuthContext";
 import { T }                   from "./theme";
 
@@ -17,6 +20,10 @@ const TABS = [
   { id: "pembelian",   icon: "🛒", label: "Pembelian",   component: PembelianManager },
   { id: "analytics",   icon: "📈", label: "Analitik",    component: KCCAnalytics },
   { id: "rekomendasi", icon: "💡", label: "Rekomendasi", component: KCCRecommendationEngine },
+  // Inventory Harian (retail) — modul baru, terpisah dari Inventory bahan F&B.
+  { id: "master-item",  icon: "🏷️", label: "Master Item",     component: MasterItemManager },
+  { id: "trx-harian",   icon: "🧾", label: "Transaksi Harian", component: DailyStockManager },
+  { id: "dash-stok",    icon: "📦", label: "Dashboard Stok",   component: DashboardStok },
 ];
 
 export default function App() {
