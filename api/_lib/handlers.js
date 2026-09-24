@@ -558,30 +558,21 @@ async function apiPurgeSeedData(p) {
 
 // Kolom mutasi harian, urutan tampil di tabel Transaksi Harian & Dashboard
 // Stok. isOutflow menandai kolom yang MENGURANGI Balance (semua kecuali
-// Beg. Balance & Receiving).
+// Beg. Balance & Receiving). Hanya 4 kolom yang dipakai — Snack, Backcharge,
+// HKL, Event, Ent, TO dihapus sesuai kebutuhan (tidak relevan untuk retail).
 const MOVEMENT_COLUMNS = [
   { key: 'beg_balance', out: 'BEG_BALANCE', isOutflow: false },
   { key: 'receiving', out: 'RECEIVING', isOutflow: false },
   { key: 'regular', out: 'REGULAR', isOutflow: true },
-  { key: 'snack', out: 'SNACK', isOutflow: true },
-  { key: 'backcharge', out: 'BACKCHARGE', isOutflow: true },
-  { key: 'hkl', out: 'HKL', isOutflow: true },
-  { key: 'event', out: 'EVENT', isOutflow: true },
-  { key: 'ent', out: 'ENT', isOutflow: true },
-  { key: 'to_qty', out: 'TO_QTY', isOutflow: true },
   { key: 'spoil', out: 'SPOIL', isOutflow: true },
 ];
 // Kolom yang diinput user — semua kecuali beg_balance, yang selalu auto dari
 // Balance tanggal sebelumnya (read-only, tidak pernah dipercaya dari client).
 const EDITABLE_MOVEMENT_KEYS = MOVEMENT_COLUMNS.filter((c) => c.key !== 'beg_balance').map((c) => c.key);
 
-// Balance = Beg.Balance + Receiving − (Regular+Snack+Backcharge+HKL+Event+Ent+TO+Spoil).
+// Balance = Beg.Balance + Receiving − Regular − Spoil.
 function computeBalance(m) {
-  return (
-    num(m.beg_balance) + num(m.receiving)
-    - num(m.regular) - num(m.snack) - num(m.backcharge)
-    - num(m.hkl) - num(m.event) - num(m.ent) - num(m.to_qty) - num(m.spoil)
-  );
+  return num(m.beg_balance) + num(m.receiving) - num(m.regular) - num(m.spoil);
 }
 
 // "YYYY-MM-DD" + n hari (n boleh negatif), tanpa dependensi tanggal eksternal.
@@ -623,22 +614,13 @@ async function buildDailyStockView(outletId, date) {
     const stored = currentByItem.get(item.id);
     const begBalance = prevBalanceByItem.get(item.id) ?? 0;
     const m = stored
-      ? {
-          beg_balance: begBalance, receiving: stored.receiving, regular: stored.regular, snack: stored.snack,
-          backcharge: stored.backcharge, hkl: stored.hkl, event: stored.event, ent: stored.ent,
-          to_qty: stored.to_qty, spoil: stored.spoil,
-        }
-      : {
-          beg_balance: begBalance, receiving: 0, regular: 0, snack: 0, backcharge: 0,
-          hkl: 0, event: 0, ent: 0, to_qty: 0, spoil: 0,
-        };
+      ? { beg_balance: begBalance, receiving: stored.receiving, regular: stored.regular, spoil: stored.spoil }
+      : { beg_balance: begBalance, receiving: 0, regular: 0, spoil: 0 };
 
     return {
       // Data bahan langsung dari Inventory — tidak ada katalog terpisah.
       ID_BAHAN: item.id, NAMA: item.nama, SATUAN: item.satuan_pakai, HARGA: num(item.harga_rata2),
-      BEG_BALANCE: num(m.beg_balance), RECEIVING: num(m.receiving), REGULAR: num(m.regular), SNACK: num(m.snack),
-      BACKCHARGE: num(m.backcharge), HKL: num(m.hkl), EVENT: num(m.event), ENT: num(m.ent),
-      TO_QTY: num(m.to_qty), SPOIL: num(m.spoil),
+      BEG_BALANCE: num(m.beg_balance), RECEIVING: num(m.receiving), REGULAR: num(m.regular), SPOIL: num(m.spoil),
       BALANCE: computeBalance(m),
       PERSISTED: !!stored,
     };
@@ -713,14 +695,12 @@ async function apiDailyStockSave(p) {
       const begBalance = prevBalanceByItem.get(e.idBahan) ?? 0;
       const balance = computeBalance({ beg_balance: begBalance, ...e });
       await client.sql`
-        INSERT INTO daily_stock (outlet_id, record_date, id_bahan, beg_balance, receiving, regular, snack,
-                                  backcharge, hkl, event, ent, to_qty, spoil, balance, created_by, updated_by)
-        VALUES (${s.outletId}, ${date}, ${e.idBahan}, ${begBalance}, ${e.receiving}, ${e.regular}, ${e.snack},
-                ${e.backcharge}, ${e.hkl}, ${e.event}, ${e.ent}, ${e.to_qty}, ${e.spoil}, ${balance},
-                ${s.userId}, ${s.userId})
+        INSERT INTO daily_stock (outlet_id, record_date, id_bahan, beg_balance, receiving, regular,
+                                  spoil, balance, created_by, updated_by)
+        VALUES (${s.outletId}, ${date}, ${e.idBahan}, ${begBalance}, ${e.receiving}, ${e.regular},
+                ${e.spoil}, ${balance}, ${s.userId}, ${s.userId})
         ON CONFLICT (outlet_id, record_date, id_bahan) DO UPDATE SET
-          beg_balance=${begBalance}, receiving=${e.receiving}, regular=${e.regular}, snack=${e.snack},
-          backcharge=${e.backcharge}, hkl=${e.hkl}, event=${e.event}, ent=${e.ent}, to_qty=${e.to_qty}, spoil=${e.spoil},
+          beg_balance=${begBalance}, receiving=${e.receiving}, regular=${e.regular}, spoil=${e.spoil},
           balance=${balance}, updated_by=${s.userId}, updated_at=NOW();`;
     }
     await client.sql`COMMIT`;
