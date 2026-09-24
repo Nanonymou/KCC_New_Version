@@ -97,6 +97,16 @@ export async function fetchProduk(token) {
   }
 }
 
+/** @param {string} token @param {string} date - "YYYY-MM-DD" */
+export async function fetchSalesList(token, date) {
+  try {
+    const res = await gasRun("apiInvSalesList", { token, TANGGAL: date });
+    return res?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** @param {string} token */
 export async function fetchResep(token) {
   try {
@@ -189,6 +199,7 @@ export const adjustStok     = (token, data) => gasRun("apiInvAdjustment", { toke
 // ── Maintenance: hapus sisa data contoh bawaan (SUPER_ADMIN saja) ──────────
 export const purgeSeedData  = (token) => gasRun("apiPurgeSeedData", { token });
 export const recordSale     = (token, data) => gasRun("apiInvSalesCreate", { token, data });
+export const deleteSale     = (token, ID)   => gasRun("apiInvSalesDelete", { token, ID });
 
 // ── Master: Bahan ──────────────────────────────────────────
 export const createBahan     = (token, data)    => gasRun("apiBahanCreate", { token, data });
