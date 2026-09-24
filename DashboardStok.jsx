@@ -1,13 +1,14 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// DashboardStok.jsx — rekap nilai Rp Transaksi Harian (modul Inventory Harian
-// retail). Membaca apiDashboardStok, yang memakai view yang sama dengan
-// Transaksi Harian lalu menghitung nilai Rp per kolom mutasi (Price × Qty).
+// DashboardStok.jsx — rekap nilai Rp Transaksi Harian.
+// Membaca apiDashboardStok, yang memakai view yang sama dengan Transaksi
+// Harian (bahan dari Inventory) lalu menghitung nilai Rp per kolom mutasi
+// (Harga rata-rata × Qty).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "./AuthContext";
-import { fetchDashboardStok, MOVEMENT_COLUMNS, ITEM_SECTIONS, idr } from "./kcc_data_layer";
-import { TextInput, Select } from "./FormKit";
+import { fetchDashboardStok, MOVEMENT_COLUMNS, idr } from "./kcc_data_layer";
+import { TextInput } from "./FormKit";
 import { T } from "./theme";
 
 function todayISO() {
@@ -21,7 +22,6 @@ function Card({ children, style = {} }) {
 export default function DashboardStok() {
   const { token } = useAuth();
   const [date, setDate] = useState(todayISO());
-  const [section, setSection] = useState("all");
   const [query, setQuery] = useState("");
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -29,10 +29,10 @@ export default function DashboardStok() {
   const reload = useCallback(async () => {
     if (!token) return;
     setLoading(true);
-    const data = await fetchDashboardStok(token, date, { section, query });
+    const data = await fetchDashboardStok(token, date, { query });
     if (data) setResult(data);
     setLoading(false);
-  }, [token, date, section, query]);
+  }, [token, date, query]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -48,7 +48,7 @@ export default function DashboardStok() {
           📊 Dashboard Stok
         </div>
         <div style={{ fontSize: 13, color: T.textFaint, marginTop: 4 }}>
-          Rekap nilai Rp Transaksi Harian per tanggal
+          Rekap nilai Rp Transaksi Harian per tanggal — bahan diambil dari Inventory
         </div>
       </div>
 
@@ -62,16 +62,12 @@ export default function DashboardStok() {
               border: `1px solid ${T.border}`, borderRadius: T.radiusSm, outline: "none",
             }}
           />
-          <Select value={section} onChange={(e) => setSection(e.target.value)} style={{ width: 220 }}>
-            <option value="all">Semua Section</option>
-            {ITEM_SECTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-          </Select>
           <TextInput
             value={query} onChange={(e) => setQuery(e.target.value)}
-            placeholder="Cari Item Code / Description / Brand…" style={{ flex: 1, minWidth: 200 }}
+            placeholder="Cari nama bahan…" style={{ flex: 1, minWidth: 200 }}
           />
           <span style={{ fontSize: 12, color: T.textFaint, whiteSpace: "nowrap" }}>
-            {counts.shown} dari {counts.total} item
+            {counts.shown} dari {counts.total} bahan
           </span>
         </div>
       </Card>
@@ -105,7 +101,7 @@ export default function DashboardStok() {
           {/* Nilai per kolom mutasi */}
           <Card style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 12 }}>
-              Nilai Rp per Kolom Mutasi (Price × Qty)
+              Nilai Rp per Kolom Mutasi (Harga × Qty)
             </div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -127,34 +123,32 @@ export default function DashboardStok() {
             </div>
           </Card>
 
-          {/* Detail per item */}
+          {/* Detail per bahan */}
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "16px 20px 0", fontSize: 13, fontWeight: 700, color: T.text }}>
-              Detail per Item ({rows.length})
+              Detail per Bahan ({rows.length})
             </div>
             <div style={{ overflowX: "auto", marginTop: 8 }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                 <thead>
                   <tr>
-                    <th style={thCol}>Item Code</th>
-                    <th style={thCol}>Description</th>
-                    <th style={thCol}>Section</th>
+                    <th style={thCol}>Bahan</th>
+                    <th style={thCol}>Satuan</th>
                     <th style={{ ...thCol, textAlign: "right" }}>Balance</th>
-                    <th style={{ ...thCol, textAlign: "right" }}>Price</th>
+                    <th style={{ ...thCol, textAlign: "right" }}>Harga</th>
                     <th style={{ ...thCol, textAlign: "right" }}>Nilai Stok</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.length === 0 ? (
-                    <tr><td style={tdCol} colSpan={6}>Tidak ada item yang cocok filter.</td></tr>
+                    <tr><td style={tdCol} colSpan={5}>Tidak ada bahan yang cocok pencarian.</td></tr>
                   ) : rows.map((r) => (
-                    <tr key={r.ID_ITEM}>
-                      <td style={{ ...tdCol, fontWeight: 600 }}>{r.ITEM_CODE}</td>
-                      <td style={tdCol}>{r.DESCRIPTION}</td>
-                      <td style={tdCol}>{r.SECTION}</td>
+                    <tr key={r.ID_BAHAN}>
+                      <td style={{ ...tdCol, fontWeight: 600 }}>{r.NAMA}</td>
+                      <td style={tdCol}>{r.SATUAN || "—"}</td>
                       <td style={{ ...tdCol, textAlign: "right" }}>{r.BALANCE}</td>
-                      <td style={{ ...tdCol, textAlign: "right" }}>{idr(r.PRICE)}</td>
-                      <td style={{ ...tdCol, textAlign: "right", fontWeight: 600 }}>{idr(r.BALANCE * r.PRICE)}</td>
+                      <td style={{ ...tdCol, textAlign: "right" }}>{idr(r.HARGA)}</td>
+                      <td style={{ ...tdCol, textAlign: "right", fontWeight: 600 }}>{idr(r.BALANCE * r.HARGA)}</td>
                     </tr>
                   ))}
                 </tbody>
