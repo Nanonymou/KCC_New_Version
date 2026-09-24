@@ -551,24 +551,10 @@ async function apiPurgeSeedData(p) {
   return ok({ deleted, total });
 }
 
-// ─── Inventory Harian (retail): master_items + daily_stock ──────────────────
-// Modul baru, terpisah dari bahan/produk/stok/stok_movements (F&B costing) di
-// atas. Skema tabel: lihat migrasi di db.js → createSchema() (master_items,
-// daily_stock).
-
-// Section katalog yang valid untuk master_items.SECTION.
-const ITEM_SECTIONS = [
-  'Frozen',
-  'Dry Goods & Dairy',
-  'Fresh Vegetable & Fruits',
-  'Chemical & Consumable',
-];
-
-const mapMasterItem = (r) => ({
-  ID_ITEM: r.id, ITEM_CODE: r.item_code, DESCRIPTION: r.description,
-  BRAND: r.brand, SIZE: r.size, UNIT: r.unit, PRICE: num(r.price),
-  SECTION: r.section, AKTIF: r.active,
-});
+// ─── Transaksi Harian & Dashboard Stok ───────────────────────────────────────
+// Sumber item = tabel `bahan` (Inventory, sudah ada) — TIDAK ada tabel/CRUD
+// master item terpisah. Skema tabel daily_stock: lihat migrasi di db.js →
+// createSchema().
 
 // Kolom mutasi harian, urutan tampil di tabel Transaksi Harian & Dashboard
 // Stok. isOutflow menandai kolom yang MENGURANGI Balance (semua kecuali
@@ -613,94 +599,25 @@ function assertValidDate(dateStr) {
   }
 }
 
-// ─── Master Item: read ────────────────────────────────────────────────────
-
-async function apiMasterItemGetAll(p) {
-  const s = await requireSession(p);
-  const { rows } = await sql`SELECT * FROM master_items WHERE outlet_id = ${s.outletId} ORDER BY item_code;`;
-  return ok(rows.map(mapMasterItem));
-}
-
-// ─── Master Item: create / update / (de)activate ──────────────────────────
-
-async function apiMasterItemCreate(p) {
-  const s = await requireSession(p);
-  const b = p.data || p;
-
-  const itemCode = String(b.ITEM_CODE || '').trim();
-  const description = String(b.DESCRIPTION || '').trim();
-  const section = String(b.SECTION || '').trim();
-  const price = num(b.PRICE);
-  if (!itemCode) { const e = new Error('Item Code wajib diisi.'); e.code = 'BAD_REQUEST'; throw e; }
-  if (!description) { const e = new Error('Description wajib diisi.'); e.code = 'BAD_REQUEST'; throw e; }
-  if (!ITEM_SECTIONS.includes(section)) { const e = new Error('Section tidak valid.'); e.code = 'BAD_REQUEST'; throw e; }
-  if (!(price >= 0)) { const e = new Error('Price tidak boleh negatif.'); e.code = 'BAD_REQUEST'; throw e; }
-
-  try {
-    const id = await insertWithGenId(s.outletId, 'master_items', 'MI', b.ID_ITEM, (id) =>
-      sql`INSERT INTO master_items (id, outlet_id, item_code, description, brand, size, unit, price, section, active)
-          VALUES (${id}, ${s.outletId}, ${itemCode}, ${description}, ${b.BRAND || null}, ${b.SIZE || null},
-                  ${b.UNIT || null}, ${price}, ${section}, TRUE);`);
-    return ok({ ID_ITEM: id });
-  } catch (e) {
-    if (e?.code === '23505') {
-      const err = new Error(`Item Code "${itemCode}" sudah digunakan.`);
-      err.code = 'BAD_REQUEST';
-      throw err;
-    }
-    throw e;
-  }
-}
-async function apiMasterItemUpdate(p) {
-  const s = await requireSession(p);
-  const b = p.data || p;
-  const section = String(b.SECTION || '').trim();
-  if (!ITEM_SECTIONS.includes(section)) { const e = new Error('Section tidak valid.'); e.code = 'BAD_REQUEST'; throw e; }
-  try {
-    await sql`UPDATE master_items SET item_code=${b.ITEM_CODE}, description=${b.DESCRIPTION}, brand=${b.BRAND || null},
-              size=${b.SIZE || null}, unit=${b.UNIT || null}, price=${num(b.PRICE)}, section=${section},
-              updated_at = NOW()
-              WHERE outlet_id=${s.outletId} AND id=${b.ID_ITEM};`;
-    return ok({ ID_ITEM: b.ID_ITEM });
-  } catch (e) {
-    if (e?.code === '23505') {
-      const err = new Error(`Item Code "${b.ITEM_CODE}" sudah digunakan.`);
-      err.code = 'BAD_REQUEST';
-      throw err;
-    }
-    throw e;
-  }
-}
-async function apiMasterItemDeactivate(p) {
-  const s = await requireSession(p);
-  await sql`UPDATE master_items SET active=FALSE, updated_at=NOW() WHERE outlet_id=${s.outletId} AND id=${p.ID_ITEM || p.id};`;
-  return ok({ ID_ITEM: p.ID_ITEM || p.id });
-}
-async function apiMasterItemReactivate(p) {
-  const s = await requireSession(p);
-  await sql`UPDATE master_items SET active=TRUE, updated_at=NOW() WHERE outlet_id=${s.outletId} AND id=${p.ID_ITEM || p.id};`;
-  return ok({ ID_ITEM: p.ID_ITEM || p.id });
-}
-
 // ─── Transaksi Harian (daily_stock): gabungan view per tanggal ─────────────
 //
-// Setiap item aktif ditampilkan satu baris — baik sudah pernah disimpan untuk
-// tanggal ini (PERSISTED=true, isi dari daily_stock) maupun belum (baris
-// kosong, PERSISTED=false, hanya Beg. Balance yang terisi). BEG_BALANCE
-// selalu diturunkan LIVE dari Balance tanggal sebelumnya — bukan dibekukan
-// saat baris pertama kali disimpan — supaya koreksi di hari sebelumnya
-// otomatis mengalir ke hari ini.
+// Setiap bahan aktif (dari Inventory) ditampilkan satu baris — baik sudah
+// pernah disimpan untuk tanggal ini (PERSISTED=true, isi dari daily_stock)
+// maupun belum (baris kosong, PERSISTED=false, hanya Beg. Balance yang
+// terisi). BEG_BALANCE selalu diturunkan LIVE dari Balance tanggal
+// sebelumnya — bukan dibekukan saat baris pertama kali disimpan — supaya
+// koreksi di hari sebelumnya otomatis mengalir ke hari ini.
 
 async function buildDailyStockView(outletId, date) {
   const prevDate = isoDateAddDays(date, -1);
   const [{ rows: items }, { rows: current }, { rows: previous }] = await Promise.all([
-    sql`SELECT * FROM master_items WHERE outlet_id=${outletId} AND active=TRUE ORDER BY item_code;`,
+    sql`SELECT * FROM bahan WHERE outlet_id=${outletId} AND active=TRUE ORDER BY nama;`,
     sql`SELECT * FROM daily_stock WHERE outlet_id=${outletId} AND record_date=${date};`,
-    sql`SELECT item_id, balance FROM daily_stock WHERE outlet_id=${outletId} AND record_date=${prevDate};`,
+    sql`SELECT id_bahan, balance FROM daily_stock WHERE outlet_id=${outletId} AND record_date=${prevDate};`,
   ]);
 
-  const currentByItem = new Map(current.map((r) => [r.item_id, r]));
-  const prevBalanceByItem = new Map(previous.map((r) => [r.item_id, num(r.balance)]));
+  const currentByItem = new Map(current.map((r) => [r.id_bahan, r]));
+  const prevBalanceByItem = new Map(previous.map((r) => [r.id_bahan, num(r.balance)]));
 
   return items.map((item) => {
     const stored = currentByItem.get(item.id);
@@ -717,8 +634,8 @@ async function buildDailyStockView(outletId, date) {
         };
 
     return {
-      ID_ITEM: item.id, ITEM_CODE: item.item_code, DESCRIPTION: item.description,
-      BRAND: item.brand, SIZE: item.size, UNIT: item.unit, PRICE: num(item.price), SECTION: item.section,
+      // Data bahan langsung dari Inventory — tidak ada katalog terpisah.
+      ID_BAHAN: item.id, NAMA: item.nama, SATUAN: item.satuan_pakai, HARGA: num(item.harga_rata2),
       BEG_BALANCE: num(m.beg_balance), RECEIVING: num(m.receiving), REGULAR: num(m.regular), SNACK: num(m.snack),
       BACKCHARGE: num(m.backcharge), HKL: num(m.hkl), EVENT: num(m.event), ENT: num(m.ent),
       TO_QTY: num(m.to_qty), SPOIL: num(m.spoil),
@@ -736,12 +653,13 @@ async function apiDailyStockView(p) {
   return ok(rows);
 }
 
-// Simpan/revisi transaksi harian untuk satu tanggal (batch, 1 baris per item).
-// BEG_BALANCE & BALANCE yang dikirim client SELALU diabaikan — dihitung ulang
-// di server dari Balance tanggal sebelumnya, supaya ledger tidak bisa
-// "diakali" dari sisi client. ON CONFLICT pada (outlet_id, record_date,
-// item_id) berarti menyimpan ulang tanggal yang sama = revisi, bukan baris
-// baru — cocok untuk "mengecek transaksi harian yang sudah digunakan/disimpan".
+// Simpan/revisi transaksi harian untuk satu tanggal (batch, 1 baris per
+// bahan). BEG_BALANCE & BALANCE yang dikirim client SELALU diabaikan —
+// dihitung ulang di server dari Balance tanggal sebelumnya, supaya ledger
+// tidak bisa "diakali" dari sisi client. ON CONFLICT pada (outlet_id,
+// record_date, id_bahan) berarti menyimpan ulang tanggal yang sama = revisi,
+// bukan baris baru — cocok untuk "mengecek transaksi harian yang sudah
+// digunakan/disimpan".
 async function apiDailyStockSave(p) {
   const s = await requireSession(p);
   const b = p.data || p;
@@ -753,10 +671,10 @@ async function apiDailyStockSave(p) {
 
   const seen = new Set();
   const parsed = entries.map((raw) => {
-    const itemId = String(raw.ID_ITEM || '').trim();
-    if (!itemId) { const e = new Error('Setiap entri butuh ID_ITEM.'); e.code = 'BAD_REQUEST'; throw e; }
-    if (seen.has(itemId)) { const e = new Error(`Entri ganda untuk item ${itemId}.`); e.code = 'BAD_REQUEST'; throw e; }
-    seen.add(itemId);
+    const idBahan = String(raw.ID_BAHAN || '').trim();
+    if (!idBahan) { const e = new Error('Setiap entri butuh ID_BAHAN.'); e.code = 'BAD_REQUEST'; throw e; }
+    if (seen.has(idBahan)) { const e = new Error(`Entri ganda untuk bahan ${idBahan}.`); e.code = 'BAD_REQUEST'; throw e; }
+    seen.add(idBahan);
     const m = {};
     for (const key of EDITABLE_MOVEMENT_KEYS) {
       const col = MOVEMENT_COLUMNS.find((c) => c.key === key);
@@ -764,26 +682,27 @@ async function apiDailyStockSave(p) {
       if (!Number.isFinite(n) || n < 0) { const e = new Error(`Kolom "${col.out}" tidak valid.`); e.code = 'BAD_REQUEST'; throw e; }
       m[key] = n;
     }
-    return { itemId, ...m };
+    return { idBahan, ...m };
   });
 
-  const itemIds = parsed.map((e) => e.itemId);
-  const { rows: knownRows } = await sql`SELECT id FROM master_items WHERE outlet_id=${s.outletId} AND id = ANY(${itemIds});`;
+  // Validasi terhadap Inventory yang sudah ada — bukan katalog terpisah.
+  const idBahanList = parsed.map((e) => e.idBahan);
+  const { rows: knownRows } = await sql`SELECT id FROM bahan WHERE outlet_id=${s.outletId} AND id = ANY(${idBahanList});`;
   const knownIds = new Set(knownRows.map((r) => r.id));
-  const unknown = itemIds.filter((id) => !knownIds.has(id));
+  const unknown = idBahanList.filter((id) => !knownIds.has(id));
   if (unknown.length > 0) {
-    const e = new Error(`Item tidak dikenal: ${unknown.slice(0, 3).join(', ')}`);
+    const e = new Error(`Bahan tidak dikenal di Inventory: ${unknown.slice(0, 3).join(', ')}`);
     e.code = 'BAD_REQUEST';
     throw e;
   }
 
   const prevDate = isoDateAddDays(date, -1);
   const [{ rows: prevRows }, { rows: existingRows }] = await Promise.all([
-    sql`SELECT item_id, balance FROM daily_stock WHERE outlet_id=${s.outletId} AND record_date=${prevDate} AND item_id = ANY(${itemIds});`,
-    sql`SELECT item_id FROM daily_stock WHERE outlet_id=${s.outletId} AND record_date=${date} AND item_id = ANY(${itemIds});`,
+    sql`SELECT id_bahan, balance FROM daily_stock WHERE outlet_id=${s.outletId} AND record_date=${prevDate} AND id_bahan = ANY(${idBahanList});`,
+    sql`SELECT id_bahan FROM daily_stock WHERE outlet_id=${s.outletId} AND record_date=${date} AND id_bahan = ANY(${idBahanList});`,
   ]);
-  const prevBalanceByItem = new Map(prevRows.map((r) => [r.item_id, num(r.balance)]));
-  const existingIds = new Set(existingRows.map((r) => r.item_id));
+  const prevBalanceByItem = new Map(prevRows.map((r) => [r.id_bahan, num(r.balance)]));
+  const existingIds = new Set(existingRows.map((r) => r.id_bahan));
 
   // Satu transaksi DB untuk seluruh batch: kalau salah satu entri gagal,
   // tidak ada baris yang tersimpan separuh untuk tanggal ini.
@@ -791,15 +710,15 @@ async function apiDailyStockSave(p) {
   try {
     await client.sql`BEGIN`;
     for (const e of parsed) {
-      const begBalance = prevBalanceByItem.get(e.itemId) ?? 0;
+      const begBalance = prevBalanceByItem.get(e.idBahan) ?? 0;
       const balance = computeBalance({ beg_balance: begBalance, ...e });
       await client.sql`
-        INSERT INTO daily_stock (outlet_id, record_date, item_id, beg_balance, receiving, regular, snack,
+        INSERT INTO daily_stock (outlet_id, record_date, id_bahan, beg_balance, receiving, regular, snack,
                                   backcharge, hkl, event, ent, to_qty, spoil, balance, created_by, updated_by)
-        VALUES (${s.outletId}, ${date}, ${e.itemId}, ${begBalance}, ${e.receiving}, ${e.regular}, ${e.snack},
+        VALUES (${s.outletId}, ${date}, ${e.idBahan}, ${begBalance}, ${e.receiving}, ${e.regular}, ${e.snack},
                 ${e.backcharge}, ${e.hkl}, ${e.event}, ${e.ent}, ${e.to_qty}, ${e.spoil}, ${balance},
                 ${s.userId}, ${s.userId})
-        ON CONFLICT (outlet_id, record_date, item_id) DO UPDATE SET
+        ON CONFLICT (outlet_id, record_date, id_bahan) DO UPDATE SET
           beg_balance=${begBalance}, receiving=${e.receiving}, regular=${e.regular}, snack=${e.snack},
           backcharge=${e.backcharge}, hkl=${e.hkl}, event=${e.event}, ent=${e.ent}, to_qty=${e.to_qty}, spoil=${e.spoil},
           balance=${balance}, updated_by=${s.userId}, updated_at=NOW();`;
@@ -812,32 +731,25 @@ async function apiDailyStockSave(p) {
     client.release();
   }
 
-  const revised = parsed.filter((e) => existingIds.has(e.itemId)).length;
+  const revised = parsed.filter((e) => existingIds.has(e.idBahan)).length;
   return ok({ saved: parsed.length, created: parsed.length - revised, revised });
 }
 
 // ─── Dashboard Stok: rekap nilai Rp dari view Transaksi Harian ─────────────
 //
 // Memakai view yang sama dengan Transaksi Harian (buildDailyStockView), lalu
-// disaring per SECTION/QUERY dan direkap: nilai Rp per kolom mutasi
-// (Price × Qty), total masuk/keluar, dan total nilai stok (Balance × Price).
+// disaring per QUERY (cari nama bahan) dan direkap: nilai Rp per kolom
+// mutasi (Harga × Qty), total masuk/keluar, dan total nilai stok
+// (Balance × Harga).
 
 async function apiDashboardStok(p) {
   const s = await requireSession(p);
   const date = p.TANGGAL || p.date || new Date().toISOString().slice(0, 10);
   assertValidDate(date);
-  const section = p.SECTION && p.SECTION !== 'all' ? String(p.SECTION) : null;
   const q = String(p.QUERY || p.query || '').trim().toLowerCase();
 
   const all = await buildDailyStockView(s.outletId, date);
-  const rows = all.filter((r) => {
-    if (section && r.SECTION !== section) return false;
-    if (q) {
-      const hay = `${r.ITEM_CODE} ${r.DESCRIPTION} ${r.BRAND || ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
+  const rows = q ? all.filter((r) => r.NAMA.toLowerCase().includes(q)) : all;
 
   const perColumn = {};
   for (const c of MOVEMENT_COLUMNS) perColumn[c.out] = 0;
@@ -846,11 +758,11 @@ async function apiDashboardStok(p) {
   let totalStockValue = 0;
   for (const r of rows) {
     for (const c of MOVEMENT_COLUMNS) {
-      const value = r.PRICE * r[c.out];
+      const value = r.HARGA * r[c.out];
       perColumn[c.out] += value;
       if (c.isOutflow) totalOut += value; else totalIn += value;
     }
-    totalStockValue += r.BALANCE * r.PRICE;
+    totalStockValue += r.BALANCE * r.HARGA;
   }
 
   return ok({
@@ -859,6 +771,7 @@ async function apiDashboardStok(p) {
     counts: { total: all.length, shown: rows.length },
   });
 }
+
 
 // ─── Registry ────────────────────────────────────────────────────────────────
 
@@ -877,11 +790,9 @@ const ROLE_REQUIRED = {
   // cashier-level: recording sales
   apiInvSalesCreate: 'KASIR',
 
-  // Inventory Harian (retail) — master item hanya Admin; input transaksi
-  // harian dibuka ke STAFF ke atas (asumsi: diisi petugas gudang/kasir tiap
-  // hari). Ubah minimum role di sini kalau kebutuhan bisnisnya berbeda.
-  apiMasterItemCreate: 'ADMIN', apiMasterItemUpdate: 'ADMIN',
-  apiMasterItemDeactivate: 'ADMIN', apiMasterItemReactivate: 'ADMIN',
+  // Transaksi Harian — dibuka ke STAFF ke atas (asumsi: diisi petugas
+  // gudang/kasir tiap hari, berdasarkan bahan yang sudah ada di Inventory).
+  // Ubah minimum role di sini kalau kebutuhan bisnisnya berbeda.
   apiDailyStockSave: 'STAFF',
 };
 
@@ -904,8 +815,8 @@ const RAW_HANDLERS = {
   apiGetBahanAll, apiGetProdukAll, apiGetResepAll, apiGetSupplierAll,
   apiInvPurchaseAll, apiInvStokSemua, apiGetDashboardSummary,
   apiResepGetByProduk, apiGetRingkasanHPPSemua, apiGetAppConfig,
-  // reads (Inventory Harian — retail, modul baru)
-  apiMasterItemGetAll, apiDailyStockView, apiDashboardStok,
+  // reads (Transaksi Harian & Dashboard Stok — bersumber dari bahan/Inventory)
+  apiDailyStockView, apiDashboardStok,
   // master writes
   apiBahanCreate, apiBahanUpdate, apiBahanDeactivate, apiBahanReactivate,
   apiProdukCreate, apiProdukUpdate, apiProdukDeactivate, apiProdukReactivate,
@@ -918,8 +829,7 @@ const RAW_HANDLERS = {
   apiSetAppConfig,
   // maintenance
   apiPurgeSeedData,
-  // writes (Inventory Harian — retail, modul baru)
-  apiMasterItemCreate, apiMasterItemUpdate, apiMasterItemDeactivate, apiMasterItemReactivate,
+  // writes (Transaksi Harian — bersumber dari bahan/Inventory)
   apiDailyStockSave,
 };
 
