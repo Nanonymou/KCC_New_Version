@@ -41,6 +41,10 @@ const mapPembelian = (r) => ({
   HARGA_BELI: num(r.harga_beli), TOTAL: num(r.total), STATUS: r.status,
 });
 const mapStok = (r) => ({ ID_BAHAN: r.id_bahan, STOK: num(r.stok), MIN_STOK: num(r.min_stok) });
+const mapPenjualan = (r) => ({
+  ID: r.id, ID_TRANSAKSI: r.id_transaksi, ID_PRODUK: r.id_produk, QTY: num(r.qty),
+  TANGGAL: r.tanggal instanceof Date ? r.tanggal.toISOString().slice(0, 10) : String(r.tanggal).slice(0, 10),
+});
 
 // ─── Auth ───────────────────────────────────────────────────────────────────
 
@@ -87,8 +91,14 @@ async function apiInvStokSemua(p) {
 
 async function apiGetDashboardSummary(p) {
   const s = await requireSession(p);
+  // BUGFIX: sebelumnya query ini tidak difilter tanggal sama sekali — jadi
+  // "Omzet Hari Ini" sebenarnya menjumlahkan SEMUA penjualan sepanjang waktu.
+  // Sekarang default ke hari ini, tapi tetap terima TANGGAL kalau suatu saat
+  // perlu melihat rekap hari lain.
+  const date = p.TANGGAL || p.date || new Date().toISOString().slice(0, 10);
+  assertValidDate(date);
   const [{ rows: penj }, { rows: bhn }, { rows: stk }, { rows: prd }, { rows: beli }] = await Promise.all([
-    sql`SELECT id_produk, SUM(qty) AS qty FROM penjualan WHERE outlet_id = ${s.outletId} GROUP BY id_produk;`,
+    sql`SELECT id_produk, SUM(qty) AS qty FROM penjualan WHERE outlet_id = ${s.outletId} AND tanggal = ${date} GROUP BY id_produk;`,
     sql`SELECT COUNT(*)::int AS c FROM bahan WHERE outlet_id = ${s.outletId} AND active;`,
     sql`SELECT COUNT(*)::int AS c FROM stok WHERE outlet_id = ${s.outletId} AND stok < min_stok;`,
     sql`SELECT COUNT(*)::int AS c FROM produk WHERE outlet_id = ${s.outletId} AND active;`,
@@ -101,6 +111,7 @@ async function apiGetDashboardSummary(p) {
   ]);
 
   return ok({
+    tanggal: date,
     penjualan: penj.map((r) => ({ ID_PRODUK: r.id_produk, QTY: num(r.qty) })),
     totalBahan: bhn[0]?.c ?? 0,
     totalProduk: prd[0]?.c ?? 0,
@@ -358,6 +369,39 @@ async function apiInvSalesCreate(p) {
     client.release();
   }
 }
+// Daftar transaksi penjualan untuk satu tanggal — dipakai halaman input
+// penjualan supaya kasir bisa mengecek apa saja yang sudah tercatat hari itu
+// (mirip PERSISTED di Transaksi Harian, tapi di sini memang tabel transaksi
+// sungguhan, jadi tinggal SELECT baris-barisnya).
+async function apiInvSalesList(p) {
+  const s = await requireSession(p);
+  const date = p.TANGGAL || p.date || new Date().toISOString().slice(0, 10);
+  assertValidDate(date);
+  const { rows } = await sql`
+    SELECT id, id_transaksi, id_produk, qty, tanggal
+    FROM penjualan WHERE outlet_id=${s.outletId} AND tanggal=${date}
+    ORDER BY id DESC;`;
+  return ok(rows.map(mapPenjualan));
+}
+
+// Hapus satu baris penjualan yang salah input. Tidak ada status "Void" di
+// sini (beda dari Pembelian) karena mencatat penjualan tidak menyentuh
+// stok/stok_movements sama sekali — jadi hapus langsung aman, tidak ada
+// efek samping ke tabel lain yang perlu dibalik.
+async function apiInvSalesDelete(p) {
+  const s = await requireSession(p);
+  const id = p.ID || p.id;
+  const { rows } = await sql`
+    DELETE FROM penjualan WHERE outlet_id=${s.outletId} AND id=${id}
+    RETURNING id;`;
+  if (!rows[0]) {
+    const err = new Error('Transaksi penjualan tidak ditemukan.');
+    err.code = 'NOT_FOUND';
+    throw err;
+  }
+  return ok({ ID: id, deleted: true });
+}
+
 async function apiInvAdjustment(p) {
   const s = await requireSession(p);
   const b = p.data || p;
@@ -769,6 +813,10 @@ const ROLE_REQUIRED = {
   apiPurgeSeedData: 'SUPER_ADMIN',
   // cashier-level: recording sales
   apiInvSalesCreate: 'KASIR',
+  // Hapus transaksi penjualan — minimum ADMIN (konsisten dengan void/delete
+  // Pembelian), supaya kasir tidak bisa menghapus catatan penjualan sendiri
+  // tanpa sepengetahuan admin.
+  apiInvSalesDelete: 'ADMIN',
 
   // Transaksi Harian — dibuka ke STAFF ke atas (asumsi: diisi petugas
   // gudang/kasir tiap hari, berdasarkan bahan yang sudah ada di Inventory).
@@ -793,7 +841,7 @@ const RAW_HANDLERS = {
   apiHealth,
   // reads
   apiGetBahanAll, apiGetProdukAll, apiGetResepAll, apiGetSupplierAll,
-  apiInvPurchaseAll, apiInvStokSemua, apiGetDashboardSummary,
+  apiInvPurchaseAll, apiInvStokSemua, apiInvSalesList, apiGetDashboardSummary,
   apiResepGetByProduk, apiGetRingkasanHPPSemua, apiGetAppConfig,
   // reads (Transaksi Harian & Dashboard Stok — bersumber dari bahan/Inventory)
   apiDailyStockView, apiDashboardStok,
@@ -804,7 +852,7 @@ const RAW_HANDLERS = {
   // recipe writes
   apiResepAddItem, apiResepUpdateItem, apiResepDeleteItem,
   // inventory writes
-  apiInvPurchaseCreate, apiInvPurchaseVoid, apiInvPurchaseDelete, apiInvSalesCreate, apiInvAdjustment,
+  apiInvPurchaseCreate, apiInvPurchaseVoid, apiInvPurchaseDelete, apiInvSalesCreate, apiInvSalesDelete, apiInvAdjustment,
   // config
   apiSetAppConfig,
   // maintenance
