@@ -209,6 +209,26 @@ async function createSchema() {
   // TIDAK ada tabel master item terpisah — sumber item langsung dari `bahan`
   // (tabel Inventory yang sudah ada di atas). daily_stock hanya menyimpan
   // mutasi harian per (outlet, tanggal, bahan), 1 baris per kombinasi itu.
+
+  // Migrasi self-healing dari revisi sebelumnya: kalau instalasi ini pernah
+  // menjalankan skema lama (daily_stock berkolom item_id + FK ke
+  // master_items), CREATE TABLE IF NOT EXISTS di bawah tidak akan membuat
+  // ulang tabelnya — jadi kolom id_bahan yang dipakai kode saat ini tidak
+  // akan pernah ada. Deteksi kondisi itu lewat information_schema (query ini
+  // aman & selalu mengembalikan 0 baris kalau daily_stock belum pernah ada
+  // sama sekali) dan drop tabel lama supaya dibuat ulang dengan struktur
+  // baru. Aman dijalankan tiap cold start: setelah migrasi pertama sukses,
+  // kolom item_id sudah tidak ada lagi sehingga blok ini jadi no-op.
+  const { rows: legacyCols } = await sql`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_name = 'daily_stock' AND column_name = 'item_id';
+  `;
+  if (legacyCols.length > 0) {
+    await sql`DROP TABLE IF EXISTS daily_stock CASCADE;`;
+  }
+  // Tabel master_items dari revisi sebelumnya sudah tidak dipakai sama sekali.
+  await sql`DROP TABLE IF EXISTS master_items CASCADE;`;
+
   await sql`CREATE TABLE IF NOT EXISTS daily_stock (
     id           SERIAL PRIMARY KEY,
     outlet_id    TEXT NOT NULL REFERENCES outlets(id),
