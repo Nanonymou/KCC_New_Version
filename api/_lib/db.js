@@ -235,19 +235,13 @@ async function createSchema() {
     record_date  DATE NOT NULL,
     id_bahan     TEXT NOT NULL,
 
-    -- Kolom mutasi (qty per jalur masuk/keluar).
+    -- Kolom mutasi (qty per jalur masuk/keluar) — hanya 3 yang dipakai.
     beg_balance  NUMERIC NOT NULL DEFAULT 0,
     receiving    NUMERIC NOT NULL DEFAULT 0,
     regular      NUMERIC NOT NULL DEFAULT 0,
-    snack        NUMERIC NOT NULL DEFAULT 0,
-    backcharge   NUMERIC NOT NULL DEFAULT 0,
-    hkl          NUMERIC NOT NULL DEFAULT 0,
-    event        NUMERIC NOT NULL DEFAULT 0,
-    ent          NUMERIC NOT NULL DEFAULT 0,
-    to_qty       NUMERIC NOT NULL DEFAULT 0,
     spoil        NUMERIC NOT NULL DEFAULT 0,
 
-    -- Derived: beg_balance + receiving − (regular+snack+backcharge+hkl+event+ent+to_qty+spoil).
+    -- Derived: beg_balance + receiving − regular − spoil.
     -- Disimpan (bukan dihitung on-the-fly) supaya dashboard/report tinggal SELECT.
     balance      NUMERIC NOT NULL DEFAULT 0,
 
@@ -260,6 +254,14 @@ async function createSchema() {
     -- Satu baris per bahan per outlet per tanggal — mencegah entri ganda di hari yang sama.
     UNIQUE (outlet_id, record_date, id_bahan)
   );`;
+  // Migrasi self-healing: buang kolom mutasi yang sudah tidak dipakai kalau
+  // instalasi ini sempat menjalankan skema sebelumnya (Snack/Backcharge/
+  // HKL/Event/Ent/TO). DROP COLUMN IF EXISTS aman & idempotent — no-op kalau
+  // kolomnya memang sudah tidak ada. Data Receiving/Regular/Spoil/Balance
+  // yang sudah tersimpan tidak ikut terhapus.
+  for (const col of ['snack', 'backcharge', 'hkl', 'event', 'ent', 'to_qty']) {
+    await sql.query(`ALTER TABLE daily_stock DROP COLUMN IF EXISTS ${col};`);
+  }
   // Pola akses utama: semua baris 1 outlet pada 1 tanggal (halaman transaksi harian).
   await sql`CREATE INDEX IF NOT EXISTS idx_daily_stock_outlet_date
     ON daily_stock (outlet_id, record_date);`;
