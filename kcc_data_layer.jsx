@@ -147,17 +147,10 @@ export async function fetchDashboard(token) {
   }
 }
 
-// ── Inventory Harian (retail) — modul baru, terpisah dari fetchBahan/Stok ──
-
-/** @param {string} token */
-export async function fetchMasterItems(token) {
-  try {
-    const res = await gasRun("apiMasterItemGetAll", { token });
-    return res?.data ?? null;
-  } catch {
-    return null;
-  }
-}
+// ── Transaksi Harian & Dashboard Stok — bersumber dari bahan (Inventory) ───
+// Tidak ada fetch katalog terpisah: apiDailyStockView/apiDashboardStok di
+// server sudah membaca langsung dari tabel `bahan` yang sama dipakai
+// InventoryManager.
 
 /** @param {string} token @param {string} date - "YYYY-MM-DD" */
 export async function fetchDailyStockView(token, date) {
@@ -169,12 +162,10 @@ export async function fetchDailyStockView(token, date) {
   }
 }
 
-/** @param {string} token @param {string} date @param {{section?:string, query?:string}} filters */
+/** @param {string} token @param {string} date @param {{query?:string}} filters */
 export async function fetchDashboardStok(token, date, filters = {}) {
   try {
-    const res = await gasRun("apiDashboardStok", {
-      token, TANGGAL: date, SECTION: filters.section, QUERY: filters.query,
-    });
+    const res = await gasRun("apiDashboardStok", { token, TANGGAL: date, QUERY: filters.query });
     return res?.data ?? null;
   } catch {
     return null;
@@ -222,26 +213,11 @@ export const addResepItem    = (token, data) => gasRun("apiResepAddItem", { toke
 export const updateResepItem = (token, data) => gasRun("apiResepUpdateItem", { token, data });
 export const deleteResepItem = (token, data) => gasRun("apiResepDeleteItem", { token, data });
 
-// ── Inventory Harian (retail): Master Item ──────────────────
-export const createMasterItem     = (token, data)   => gasRun("apiMasterItemCreate", { token, data });
-export const updateMasterItem     = (token, data)   => gasRun("apiMasterItemUpdate", { token, data });
-export const deactivateMasterItem = (token, ID_ITEM) => gasRun("apiMasterItemDeactivate", { token, ID_ITEM });
-export const reactivateMasterItem = (token, ID_ITEM) => gasRun("apiMasterItemReactivate", { token, ID_ITEM });
-
-// ── Inventory Harian (retail): Transaksi Harian ─────────────
-// entries: [{ ID_ITEM, RECEIVING, REGULAR, SNACK, BACKCHARGE, HKL, EVENT, ENT, TO_QTY, SPOIL }]
+// ── Transaksi Harian (berdasarkan bahan yang sudah ada di Inventory) ────────
+// entries: [{ ID_BAHAN, RECEIVING, REGULAR, SNACK, BACKCHARGE, HKL, EVENT, ENT, TO_QTY, SPOIL }]
 // BEG_BALANCE & BALANCE tidak dikirim — selalu dihitung ulang di server.
 export const saveDailyStock = (token, date, entries) =>
   gasRun("apiDailyStockSave", { token, data: { TANGGAL: date, ENTRIES: entries } });
-
-// Section katalog Master Item — dipakai dropdown Tambah/Edit item.
-// Harus sama dengan ITEM_SECTIONS di api/_lib/handlers.js.
-export const ITEM_SECTIONS = [
-  "Frozen",
-  "Dry Goods & Dairy",
-  "Fresh Vegetable & Fruits",
-  "Chemical & Consumable",
-];
 
 // Kolom mutasi Transaksi Harian, urutan tampil di tabel (sinkron dengan
 // MOVEMENT_COLUMNS di api/_lib/handlers.js).
@@ -249,12 +225,6 @@ export const MOVEMENT_COLUMNS = [
   { key: "BEG_BALANCE", label: "Beg. Balance", editable: false },
   { key: "RECEIVING",   label: "Receiving",    editable: true },
   { key: "REGULAR",     label: "Regular",      editable: true },
-  { key: "SNACK",       label: "Snack",        editable: true },
-  { key: "BACKCHARGE",  label: "Backcharge",   editable: true },
-  { key: "HKL",         label: "HKL",          editable: true },
-  { key: "EVENT",       label: "Event",        editable: true },
-  { key: "ENT",         label: "Ent",          editable: true },
-  { key: "TO_QTY",      label: "TO",           editable: true },
   { key: "SPOIL",       label: "Spoil",        editable: true },
 ];
 
