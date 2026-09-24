@@ -6,6 +6,7 @@ import KCCRecommendationEngine from "./KCC_RecommendationEngine";
 import ResepManager            from "./ResepManager";
 import InventoryManager        from "./InventoryManager";
 import PembelianManager        from "./PembelianManager";
+import PenjualanManager        from "./PenjualanManager";
 import DailyStockManager       from "./DailyStockManager";
 import DashboardStok           from "./DashboardStok";
 import { useAuth }             from "./AuthContext";
@@ -17,6 +18,7 @@ const TABS = [
   { id: "hpp",         icon: "🧮", label: "HPP & Margin", component: HPPEngine },
   { id: "inventory",   icon: "📦", label: "Inventory",   component: InventoryManager },
   { id: "pembelian",   icon: "🛒", label: "Pembelian",   component: PembelianManager },
+  { id: "penjualan",   icon: "🧾", label: "Penjualan Harian", component: PenjualanManager },
   { id: "analytics",   icon: "📈", label: "Analitik",    component: KCCAnalytics },
   { id: "rekomendasi", icon: "💡", label: "Rekomendasi", component: KCCRecommendationEngine },
   // Transaksi Harian & Dashboard Stok — berbasis bahan (Inventory) yang sudah ada.
